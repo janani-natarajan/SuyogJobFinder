@@ -3,3 +3,4 @@ pandas
 reportlab
 gtts
 imageio-ffmpeg
+Pillow

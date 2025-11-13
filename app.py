@@ -7,10 +7,37 @@ from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from gtts import gTTS
 import os
 import json
+from PIL import Image
+
+# --------------------------- Page Config ---------------------------
+st.set_page_config(
+    page_title="Suyog+ Job Finder",
+    page_icon="🧩",
+    layout="wide",
+    initial_sidebar_state="expanded"
+)
+
+# Optional: add logo if you have a logo.png
+if os.path.exists("logo.png"):
+    logo = Image.open("logo.png")
+    st.image(logo, width=100)
+
+# --------------------------- Header ---------------------------
+st.markdown(
+    """
+    <h1 style='text-align: center; color: darkblue;'>
+        🧩 Suyog<font color='maroon'>+</font> Job Finder
+    </h1>
+    <h4 style='text-align: center; color: gray;'>
+        Find government-identified jobs suitable for persons with disabilities in India
+    </h4>
+    <hr>
+    """,
+    unsafe_allow_html=True
+)
 
 # --------------------------- Check / Create Dataset ---------------------------
 file_path = "cleaned_data.jsonl"
-
 if not os.path.exists(file_path):
     sample_data = [
         {
@@ -144,30 +171,47 @@ def generate_pdf_tabulated(jobs_df):
     buffer.seek(0)
     return buffer
 
-# --------------------------- Streamlit UI ---------------------------
-st.set_page_config(page_title="Suyog+ Job Finder", page_icon="🧩", layout="centered")
-st.title("🧩 Suyog+ Job Finder for Persons with Disabilities")
-st.write("Find government-identified jobs suitable for persons with disabilities in India.")
-
-disability = st.selectbox("Select your disability:", disabilities)
+# --------------------------- Sidebar ---------------------------
+st.sidebar.title("Filter Jobs")
+disability = st.sidebar.selectbox("Select your disability:", disabilities)
 subcategory = None
 if disability == "Intellectual and Developmental Disabilities":
-    subcategory = st.selectbox("Select your subcategory:", intellectual_subcategories)
-qualification = st.selectbox("Select your qualification:", qualifications)
-department = st.selectbox("Select a department:", departments)
-selected_activities = st.multiselect("Select your functional abilities:", activities)
+    subcategory = st.sidebar.selectbox("Select your subcategory:", intellectual_subcategories)
+qualification = st.sidebar.selectbox("Select your qualification:", qualifications)
+department = st.sidebar.selectbox("Select a department:", departments)
+selected_activities = st.sidebar.multiselect("Select your functional abilities:", activities)
 
-if st.button("🔍 Find Jobs"):
+# --------------------------- Main Content ---------------------------
+if st.sidebar.button("🔍 Find Jobs"):
     jobs = filter_jobs(disability, subcategory, qualification, department, selected_activities)
     if len(jobs) == 0:
         st.error("❌ No matching jobs found. Try different criteria.")
     else:
         st.success(f"✅ Found {len(jobs)} matching jobs.")
         pdf_buffer = generate_pdf_tabulated(jobs)
-        st.download_button(label="📄 Download Results as PDF", data=pdf_buffer, file_name="suyog_jobs.pdf", mime="application/pdf")
-        if st.checkbox("🔊 Read summary aloud"):
-            tts = gTTS(f"Found {len(jobs)} matching jobs. Please check the PDF for details.", lang='en')
-            audio_buffer = io.BytesIO()
-            tts.write_to_fp(audio_buffer)
-            audio_buffer.seek(0)
-            st.audio(audio_buffer, format="audio/mp3")
+        col1, col2 = st.columns(2)
+        with col1:
+            st.download_button(
+                label="📄 Download Results as PDF",
+                data=pdf_buffer,
+                file_name="suyog_jobs.pdf",
+                mime="application/pdf"
+            )
+        with col2:
+            if st.checkbox("🔊 Read summary aloud"):
+                tts = gTTS(f"Found {len(jobs)} matching jobs. Please check the PDF for details.", lang='en')
+                audio_buffer = io.BytesIO()
+                tts.write_to_fp(audio_buffer)
+                audio_buffer.seek(0)
+                st.audio(audio_buffer, format="audio/mp3")
+
+# --------------------------- Footer ---------------------------
+st.markdown(
+    """
+    <hr>
+    <p style='text-align: center; color: gray; font-size:12px;'>
+    Developed by DAIL NIEPMD | Powered by Streamlit
+    </p>
+    """,
+    unsafe_allow_html=True
+)
