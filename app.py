@@ -1,45 +1,38 @@
-# --------------------------- Imports ---------------------------
-import warnings
-warnings.filterwarnings("ignore", category=RuntimeWarning)
-
-import os
-import io
-import json
-from threading import Thread
-
-import pandas as pd
 import streamlit as st
-from pydub import AudioSegment
-import imageio_ffmpeg
-from gtts import gTTS
+import pandas as pd
+import io
 from reportlab.lib.pagesizes import A3
 from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
-from pyngrok import ngrok
+from gtts import gTTS
+import os
+import json
 
-# --------------------------- FFmpeg Fix ---------------------------
-AudioSegment.converter = imageio_ffmpeg.get_ffmpeg_exe()
-print(f"✅ Using FFmpeg from: {AudioSegment.converter}")
-
-# --------------------------- Dataset ---------------------------
+# --------------------------- Check / Create Dataset ---------------------------
 file_path = "cleaned_data.jsonl"
 
 if not os.path.exists(file_path):
-    print("📁 'cleaned_data.jsonl' not found — creating sample dataset...")
     sample_data = [
-        {"designation": "Clerk","group": "Group C","department": "Administrative",
-         "qualification_required": "12th Standard",
-         "functional_requirements": "S Sitting, RW Reading & Writing, SE Seeing",
-         "disabilities": "Visual Impairment"},
-        {"designation": "Teacher","group": "Group B","department": "Education",
-         "qualification_required": "Graduate",
-         "functional_requirements": "S Sitting, ST Standing, H Hearing, C Communication",
-         "disabilities": "Hearing Impairment"}
+        {
+            "designation": "Clerk",
+            "group": "Group C",
+            "department": "Administrative",
+            "qualification_required": "12th Standard",
+            "functional_requirements": "S Sitting, RW Reading & Writing, SE Seeing",
+            "disabilities": "Visual Impairment"
+        },
+        {
+            "designation": "Teacher",
+            "group": "Group B",
+            "department": "Education",
+            "qualification_required": "Graduate",
+            "functional_requirements": "S Sitting, ST Standing, H Hearing, C Communication",
+            "disabilities": "Hearing Impairment"
+        }
     ]
     with open(file_path, "w") as f:
         for item in sample_data:
             f.write(json.dumps(item) + "\n")
-    print("✅ Sample dataset created as cleaned_data.jsonl")
 
 # --------------------------- Load Dataset ---------------------------
 df = pd.read_json(file_path, lines=True)
@@ -48,22 +41,30 @@ for col in df.columns:
         df[col] = df[col].map(lambda x: x.strip() if isinstance(x, str) else x)
 
 # --------------------------- Options ---------------------------
-disabilities = ["Visual Impairment","Hearing Impairment","Physical Disabilities",
-"Neurological Disabilities","Blood Disorders","Intellectual and Developmental Disabilities",
-"Mental Illness","Multiple Disabilities"]
+disabilities = [
+    "Visual Impairment", "Hearing Impairment", "Physical Disabilities",
+    "Neurological Disabilities", "Blood Disorders", "Intellectual and Developmental Disabilities",
+    "Mental Illness", "Multiple Disabilities"
+]
 
-intellectual_subcategories = ["Autism Spectrum Disorder (ASD M)",
-"Autism Spectrum Disorder (ASD MoD)","Intellectual Disability (ID)",
-"Specific Learning Disability (SLD)","Mental Illness"]
+intellectual_subcategories = [
+    "Autism Spectrum Disorder (ASD M)",
+    "Autism Spectrum Disorder (ASD MoD)",
+    "Intellectual Disability (ID)",
+    "Specific Learning Disability (SLD)",
+    "Mental Illness"
+]
 
-qualifications = ["10th Standard","12th Standard","Certificate","Diploma",
-"Graduate","Post Graduate","Doctorate"]
+qualifications = ["10th Standard", "12th Standard", "Certificate", "Diploma",
+                  "Graduate", "Post Graduate", "Doctorate"]
 
 departments = df["department"].dropna().unique().tolist()
 
-activities = ["S Sitting","ST Standing","W Walking","BN Bending","L Lifting","PP Pulling & Pushing",
-"KC Kneeling & Crouching","MF Manipulation with Fingers","RW Reading & Writing",
-"SE Seeing","H Hearing","C Communication"]
+activities = [
+    "S Sitting", "ST Standing", "W Walking", "BN Bending", "L Lifting", "PP Pulling & Pushing",
+    "KC Kneeling & Crouching", "MF Manipulation with Fingers", "RW Reading & Writing",
+    "SE Seeing", "H Hearing", "C Communication"
+]
 
 # --------------------------- Helper Functions ---------------------------
 def map_group(qualification):

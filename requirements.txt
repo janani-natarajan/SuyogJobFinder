@@ -1,6 +1,5 @@
-streamlit 
-pandas 
-reportlab 
-gtts 
-pydub 
-imageio-ffmpeg 
+streamlit
+pandas
+reportlab
+gtts
+imageio-ffmpeg
