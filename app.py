@@ -41,28 +41,19 @@ for col in df.columns:
 
 # --------------------------- Options ---------------------------
 disabilities = [
-    "Visual Impairment",
-    "Hearing Impairment",
-    "Physical Disabilities",
-    "Neurological Disabilities",
-    "Blood Disorders",
-    "Intellectual and Developmental Disabilities",
-    "Mental Illness",
-    "Multiple Disabilities"
+    "Visual Impairment", "Hearing Impairment", "Physical Disabilities",
+    "Neurological Disabilities", "Blood Disorders", "Intellectual and Developmental Disabilities",
+    "Mental Illness", "Multiple Disabilities"
 ]
 
 intellectual_subcategories = [
-    "Autism Spectrum Disorder (ASD M)",
-    "Autism Spectrum Disorder (ASD MoD)",
-    "Intellectual Disability (ID)",
-    "Specific Learning Disability (SLD)",
+    "Autism Spectrum Disorder (ASD M)", "Autism Spectrum Disorder (ASD MoD)",
+    "Intellectual Disability (ID)", "Specific Learning Disability (SLD)",
     "Mental Illness"
 ]
 
-qualifications = [
-    "10th Standard", "12th Standard", "Certificate", "Diploma",
-    "Graduate", "Post Graduate", "Doctorate"
-]
+qualifications = ["10th Standard","12th Standard","Certificate","Diploma",
+                  "Graduate","Post Graduate","Doctorate"]
 
 activities = [
     "S Sitting","ST Standing","W Walking","BN Bending","L Lifting","PP Pulling & Pushing",
@@ -100,7 +91,7 @@ def map_group(qualification):
     else:
         return ["Group D"]
 
-# --------- FIXED filter_jobs to show all matching jobs ----------
+# --------- IMPROVED filter_jobs ----------
 def filter_jobs(disability=None, subcategory=None, qualification=None, department=None, activities=None):
     df_filtered = df.copy()
 
@@ -112,7 +103,7 @@ def filter_jobs(disability=None, subcategory=None, qualification=None, departmen
                 mask |= df_filtered[col].astype(str).str.lower().str.contains(disability.lower(), na=False)
         df_filtered = df_filtered[mask]
 
-    # Subcategory filter
+    # Subcategory filter (optional)
     if subcategory:
         mask_sub = pd.Series(False, index=df_filtered.index)
         for col in df_filtered.columns:
@@ -126,13 +117,13 @@ def filter_jobs(disability=None, subcategory=None, qualification=None, departmen
         mask_group = df_filtered["group"].astype(str).str.strip().isin(allowed_groups)
         df_filtered = df_filtered[mask_group]
 
-    # Department filter (only if selected)
+    # Department filter (optional)
     if department and department.strip() != "":
         mask_dep = df_filtered["department"].astype(str).str.lower().str.contains(department.lower(), na=False)
         df_filtered = df_filtered[mask_dep]
 
-    # Functional abilities filter (any match)
-    if activities and "functional_requirements" in df_filtered.columns:
+    # Functional abilities filter (any match, optional)
+    if activities and len(activities) > 0 and "functional_requirements" in df_filtered.columns:
         df_filtered["functional_norm"] = df_filtered["functional_requirements"].astype(str).str.upper().str.replace(r'[^A-Z ]','', regex=True)
         selected_norm = [a.split()[0].upper() for a in activities]
         mask_act = df_filtered["functional_norm"].apply(lambda fr: any(a in fr for a in selected_norm))
@@ -198,14 +189,14 @@ selected_activities = st.multiselect("Select your functional abilities:", activi
 
 if st.button("🔍 Find Jobs"):
     jobs = filter_jobs(disability, subcategory, qualification, department, selected_activities)
-    
+
     if len(jobs) == 0:
         st.warning("⚠️ No matching jobs found. Try selecting fewer filters or other criteria.")
     else:
         st.success(f"✅ Found {len(jobs)} matching jobs.")
         
-        # Show all matching jobs in a table
-        st.dataframe(jobs[['designation', 'group', 'department', 'qualification_required', 'functional_requirements', 'disabilities']])
+        # Show all matches in a table
+        st.dataframe(jobs[['designation','group','department','qualification_required','functional_requirements','disabilities']])
         
         # PDF download
         pdf_buffer = generate_pdf_tabulated(jobs)
