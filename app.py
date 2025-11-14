@@ -104,6 +104,7 @@ def map_group(qualification):
 def filter_jobs(disability=None, subcategory=None, qualification=None, department=None, activities=None):
     df_filtered = df.copy()
 
+    # Disability filter
     if disability:
         mask = pd.Series(False, index=df_filtered.index)
         for col in df_filtered.columns:
@@ -111,6 +112,7 @@ def filter_jobs(disability=None, subcategory=None, qualification=None, departmen
                 mask |= df_filtered[col].astype(str).str.lower().str.contains(disability.lower(), na=False)
         df_filtered = df_filtered[mask]
 
+    # Subcategory filter
     if subcategory:
         mask_sub = pd.Series(False, index=df_filtered.index)
         for col in df_filtered.columns:
@@ -118,19 +120,22 @@ def filter_jobs(disability=None, subcategory=None, qualification=None, departmen
                 mask_sub |= df_filtered[col].astype(str).str.lower().str.contains(subcategory.lower(), na=False)
         df_filtered = df_filtered[mask_sub]
 
+    # Qualification / Group filter
     if qualification and "group" in df_filtered.columns:
         allowed_groups = map_group(qualification)
         mask_group = df_filtered["group"].astype(str).str.strip().isin(allowed_groups)
         df_filtered = df_filtered[mask_group]
 
-    if department:
+    # Department filter (only if selected)
+    if department and department.strip() != "":
         mask_dep = df_filtered["department"].astype(str).str.lower().str.contains(department.lower(), na=False)
         df_filtered = df_filtered[mask_dep]
 
+    # Functional abilities filter (any match)
     if activities and "functional_requirements" in df_filtered.columns:
         df_filtered["functional_norm"] = df_filtered["functional_requirements"].astype(str).str.upper().str.replace(r'[^A-Z ]','', regex=True)
         selected_norm = [a.split()[0].upper() for a in activities]
-        mask_act = df_filtered["functional_norm"].apply(lambda fr: all(a in fr for a in selected_norm))
+        mask_act = df_filtered["functional_norm"].apply(lambda fr: any(a in fr for a in selected_norm))
         df_filtered = df_filtered[mask_act]
 
     return df_filtered.reset_index(drop=True)
@@ -195,7 +200,7 @@ if st.button("🔍 Find Jobs"):
     jobs = filter_jobs(disability, subcategory, qualification, department, selected_activities)
     
     if len(jobs) == 0:
-        st.error("❌ No matching jobs found. Try different criteria.")
+        st.warning("⚠️ No matching jobs found. Try selecting fewer filters or other criteria.")
     else:
         st.success(f"✅ Found {len(jobs)} matching jobs.")
         
