@@ -72,7 +72,6 @@ activities = [
 
 # --------------------------- Departments ---------------------------
 departments_from_df = df["department"].dropna().unique().tolist()
-
 extra_departments = [
     'Assistant Accounts General (Audit) / Assistant Accountant General (Audit)',
     'brass finisher(86)', 'utility hand', 'Lascar OD', 'SG. Janitors', 'Janitor',
@@ -89,7 +88,6 @@ extra_departments = [
     'Grounds Man', 'Agricultural Assistan', 'Cultivator, Crop ', 'Lac Treater', 'Crusher Operator, Minerals ',
     'Operator, Farm Machines', 'Asst. Cane Officer', 'Farm Management', 'Farm Technician', 'Fieldsman'
 ]
-
 departments = sorted(list(set(departments_from_df + extra_departments)))
 
 # --------------------------- Helper Functions ---------------------------
@@ -102,37 +100,39 @@ def map_group(qualification):
     else:
         return ["Group D"]
 
+# --------- FIXED filter_jobs to show all matching jobs ----------
 def filter_jobs(disability=None, subcategory=None, qualification=None, department=None, activities=None):
     df_filtered = df.copy()
+
     if disability:
         mask = pd.Series(False, index=df_filtered.index)
         for col in df_filtered.columns:
             if "disabilities" in col.lower():
                 mask |= df_filtered[col].astype(str).str.lower().str.contains(disability.lower(), na=False)
-        if mask.any():
-            df_filtered = df_filtered[mask]
+        df_filtered = df_filtered[mask]
+
     if subcategory:
         mask_sub = pd.Series(False, index=df_filtered.index)
         for col in df_filtered.columns:
             if "subcategory" in col.lower():
                 mask_sub |= df_filtered[col].astype(str).str.lower().str.contains(subcategory.lower(), na=False)
-        if mask_sub.any():
-            df_filtered = df_filtered[mask_sub]
-    allowed_groups = map_group(qualification) if qualification else []
-    if allowed_groups and "group" in df_filtered.columns:
+        df_filtered = df_filtered[mask_sub]
+
+    if qualification and "group" in df_filtered.columns:
+        allowed_groups = map_group(qualification)
         mask_group = df_filtered["group"].astype(str).str.strip().isin(allowed_groups)
-        if mask_group.any():
-            df_filtered = df_filtered[mask_group]
+        df_filtered = df_filtered[mask_group]
+
     if department:
         mask_dep = df_filtered["department"].astype(str).str.lower().str.contains(department.lower(), na=False)
-        if mask_dep.any():
-            df_filtered = df_filtered[mask_dep]
+        df_filtered = df_filtered[mask_dep]
+
     if activities and "functional_requirements" in df_filtered.columns:
         df_filtered["functional_norm"] = df_filtered["functional_requirements"].astype(str).str.upper().str.replace(r'[^A-Z ]','', regex=True)
         selected_norm = [a.split()[0].upper() for a in activities]
-        mask_act = df_filtered["functional_norm"].apply(lambda fr: any(a in fr for a in selected_norm))
-        if mask_act.any():
-            df_filtered = df_filtered[mask_act]
+        mask_act = df_filtered["functional_norm"].apply(lambda fr: all(a in fr for a in selected_norm))
+        df_filtered = df_filtered[mask_act]
+
     return df_filtered.reset_index(drop=True)
 
 def capitalize_first_letter(value):
