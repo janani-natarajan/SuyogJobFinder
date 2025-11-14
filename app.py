@@ -17,13 +17,14 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# Optional logo
+# Optional: add logo if you have a logo.png
 if os.path.exists("logo.png"):
     logo = Image.open("logo.png")
     st.image(logo, width=100)
 
 # --------------------------- Header ---------------------------
-st.markdown("""
+st.markdown(
+    """
     <h1 style='text-align: center; color: darkblue;'>
         🧩 Suyog<font color='maroon'>+</font> Job Finder
     </h1>
@@ -31,7 +32,9 @@ st.markdown("""
         Find government-identified jobs suitable for persons with disabilities in India
     </h4>
     <hr>
-""", unsafe_allow_html=True)
+    """,
+    unsafe_allow_html=True
+)
 
 # --------------------------- Check / Create Dataset ---------------------------
 file_path = "cleaned_data.jsonl"
@@ -97,54 +100,47 @@ def map_group(qualification):
         return ["Group A","Group B","Group C","Group D"]
     elif q == "12th standard":
         return ["Group C","Group D"]
-    else:  # includes 10th Standard and others
+    else:
         return ["Group D"]
 
 def filter_jobs(disability=None, subcategory=None, qualification=None, department=None, activities=None):
     df_filtered = df.copy()
-
-    # Filter by disability
     if disability:
         mask = pd.Series(False, index=df_filtered.index)
         for col in df_filtered.columns:
             if "disabilities" in col.lower():
                 mask |= df_filtered[col].astype(str).str.lower().str.contains(disability.lower(), na=False)
-        df_filtered = df_filtered[mask]
-
-    # Filter by subcategory (for intellectual disabilities)
+        if mask.any():
+            df_filtered = df_filtered[mask]
     if subcategory:
         mask_sub = pd.Series(False, index=df_filtered.index)
         for col in df_filtered.columns:
             if "subcategory" in col.lower():
                 mask_sub |= df_filtered[col].astype(str).str.lower().str.contains(subcategory.lower(), na=False)
-        df_filtered = df_filtered[mask_sub]
-
-    # Filter by qualification group
-    if qualification and "group" in df_filtered.columns:
-        allowed_groups = map_group(qualification)
-        mask_group = df_filtered["group"].astype(str).str.split(",").apply(
-            lambda x: any(g.strip() in allowed_groups for g in x)
-        )
-        df_filtered = df_filtered[mask_group]
-
-    # Filter by department
+        if mask_sub.any():
+            df_filtered = df_filtered[mask_sub]
+    allowed_groups = map_group(qualification) if qualification else []
+    if allowed_groups and "group" in df_filtered.columns:
+        mask_group = df_filtered["group"].astype(str).str.strip().isin(allowed_groups)
+        if mask_group.any():
+            df_filtered = df_filtered[mask_group]
     if department:
         mask_dep = df_filtered["department"].astype(str).str.lower().str.contains(department.lower(), na=False)
-        df_filtered = df_filtered[mask_dep]
-
-    # Filter by functional abilities
+        if mask_dep.any():
+            df_filtered = df_filtered[mask_dep]
     if activities and "functional_requirements" in df_filtered.columns:
-        df_filtered["functional_norm"] = df_filtered["functional_requirements"].astype(str)\
-            .str.upper().str.replace(r'[^A-Z ]','', regex=True)
+        df_filtered["functional_norm"] = df_filtered["functional_requirements"].astype(str).str.upper().str.replace(r'[^A-Z ]','', regex=True)
         selected_norm = [a.split()[0].upper() for a in activities]
         mask_act = df_filtered["functional_norm"].apply(lambda fr: any(a in fr for a in selected_norm))
-        df_filtered = df_filtered[mask_act]
-
+        if mask_act.any():
+            df_filtered = df_filtered[mask_act]
     return df_filtered.reset_index(drop=True)
 
 def capitalize_first_letter(value):
     value = str(value).strip()
-    return value[0].upper() + value[1:] if value and value != '-' else value
+    if value != '-':
+        return value[0].upper() + value[1:]
+    return value
 
 def generate_pdf_tabulated(jobs_df):
     buffer = io.BytesIO()
@@ -159,7 +155,8 @@ def generate_pdf_tabulated(jobs_df):
     elements.append(Paragraph('<font color="darkblue">By DAIL NIEPMD</font>', style_title))
     elements.append(Spacer(1, 20))
 
-    elements.append(Paragraph(f"Total Matches: {len(jobs_df)}", style_text))
+    total_matches = len(jobs_df)
+    elements.append(Paragraph(f"Total Matches: {total_matches}", style_text))
     elements.append(Spacer(1, 20))
 
     for _, job in jobs_df.iterrows():
@@ -209,9 +206,12 @@ if st.sidebar.button("🔍 Find Jobs"):
                 st.audio(audio_buffer, format="audio/mp3")
 
 # --------------------------- Footer ---------------------------
-st.markdown("""
+st.markdown(
+    """
     <hr>
     <p style='text-align: center; color: gray; font-size:12px;'>
     Developed by DAIL NIEPMD | Powered by Streamlit
     </p>
-""", unsafe_allow_html=True)
+    """,
+    unsafe_allow_html=True
+)
