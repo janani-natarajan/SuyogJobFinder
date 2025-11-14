@@ -16,30 +16,22 @@ for col in df.columns:
         df[col] = df[col].map(lambda x: x.strip() if isinstance(x, str) else x)
 
 # --------------------------- Options ---------------------------
-disabilities = [
-    "Visual Impairment","Hearing Impairment","Physical Disabilities",
-    "Neurological Disabilities","Blood Disorders","Intellectual and Developmental Disabilities",
-    "Mental Illness","Multiple Disabilities"
-]
+disabilities = ["Visual Impairment","Hearing Impairment","Physical Disabilities",
+"Neurological Disabilities","Blood Disorders","Intellectual and Developmental Disabilities",
+"Mental Illness","Multiple Disabilities"]
 
-intellectual_subcategories = [
-    "Autism Spectrum Disorder (ASD M)",
-    "Autism Spectrum Disorder (ASD MoD)",
-    "Intellectual Disability (ID)",
-    "Specific Learning Disability (SLD)",
-    "Mental Illness"
-]
+intellectual_subcategories = ["Autism Spectrum Disorder (ASD M)",
+"Autism Spectrum Disorder (ASD MoD)","Intellectual Disability (ID)","Specific Learning Disability (SLD)",
+"Mental Illness"]
 
 qualifications = ["10th Standard","12th Standard","Certificate","Diploma",
 "Graduate","Post Graduate","Doctorate"]
 
 departments = df["department"].dropna().unique().tolist()
 
-activities = [
-    "S Sitting","ST Standing","W Walking","BN Bending","L Lifting","PP Pulling & Pushing",
-    "KC Kneeling & Crouching","MF Manipulation with Fingers","RW Reading & Writing",
-    "SE Seeing","H Hearing","C Communication"
-]
+activities = ["S Sitting","ST Standing","W Walking","BN Bending","L Lifting","PP Pulling & Pushing",
+"KC Kneeling & Crouching","MF Manipulation with Fingers","RW Reading & Writing",
+"SE Seeing","H Hearing","C Communication"]
 
 # --------------------------- Helper Functions ---------------------------
 def map_group(qualification):
@@ -53,58 +45,51 @@ def map_group(qualification):
 
 def filter_jobs(disability=None, subcategory=None, qualification=None, department=None, activities=None):
     df_filtered = df.copy()
-    warnings = []
+    match_info = []
 
-    # Filter by disability
-    if disability:
-        mask = pd.Series(False, index=df_filtered.index)
-        for col in df_filtered.columns:
-            if "disabilities" in col.lower():
-                mask |= df_filtered[col].astype(str).str.lower().str.contains(disability.lower(), na=False)
-        if mask.any():
-            df_filtered = df_filtered[mask]
-        else:
-            warnings.append("No exact matches for selected disability.")
+    for _, job in df_filtered.iterrows():
+        match = True
+        reasons = []
 
-    # Filter by subcategory
-    if subcategory:
-        mask_sub = pd.Series(False, index=df_filtered.index)
-        for col in df_filtered.columns:
-            if "subcategory" in col.lower():
-                mask_sub |= df_filtered[col].astype(str).str.lower().str.contains(subcategory.lower(), na=False)
-        if mask_sub.any():
-            df_filtered = df_filtered[mask_sub]
-        else:
-            warnings.append("No exact matches for selected subcategory.")
+        # Disability check
+        if disability and "disabilities" in job:
+            if disability.lower() not in str(job["disabilities"]).lower():
+                match = False
+                reasons.append("Disability mismatch")
 
-    # Filter by group
-    allowed_groups = map_group(qualification) if qualification else []
-    if allowed_groups and "group" in df_filtered.columns:
-        mask_group = df_filtered["group"].astype(str).str.strip().isin(allowed_groups)
-        if mask_group.any():
-            df_filtered = df_filtered[mask_group]
-        else:
-            warnings.append("No jobs match your qualification group.")
+        # Subcategory check
+        if subcategory and "subcategory" in job:
+            if subcategory.lower() not in str(job.get("subcategory", "")).lower():
+                match = False
+                reasons.append("Subcategory mismatch")
 
-    # Filter by department
-    if department:
-        mask_dep = df_filtered["department"].astype(str).str.lower().str.contains(department.lower(), na=False)
-        if mask_dep.any():
-            df_filtered = df_filtered[mask_dep]
-        else:
-            warnings.append("No jobs in the selected department.")
+        # Qualification group
+        if qualification and "group" in job:
+            allowed_groups = map_group(qualification)
+            if job["group"].strip() not in allowed_groups:
+                match = False
+                reasons.append("Group mismatch")
 
-    # Filter by activities
-    if activities and "functional_requirements" in df_filtered.columns:
-        df_filtered["functional_norm"] = df_filtered["functional_requirements"].astype(str).str.upper().str.replace(r'[^A-Z ]','', regex=True)
-        selected_norm = [a.split()[0].upper() for a in activities]
-        mask_act = df_filtered["functional_norm"].apply(lambda fr: any(a in fr for a in selected_norm))
-        if mask_act.any() and mask_act.sum() > 0:
-            df_filtered = df_filtered[mask_act]
-        else:
-            warnings.append("No jobs match all selected activities. Showing closest matches.")
+        # Department check
+        if department and "department" in job:
+            if department.lower() not in str(job["department"]).lower():
+                match = False
+                reasons.append("Department mismatch")
 
-    return df_filtered.reset_index(drop=True), warnings
+        # Functional abilities check
+        if activities and "functional_requirements" in job:
+            fr_norm = str(job["functional_requirements"]).upper()
+            selected_norm = [a.split()[0].upper() for a in activities]
+            if not any(a in fr_norm for a in selected_norm):
+                match = False
+                reasons.append("Functional abilities mismatch")
+
+        job_copy = job.copy()
+        job_copy["match"] = match
+        job_copy["reasons"] = ", ".join(reasons)
+        match_info.append(job_copy)
+
+    return pd.DataFrame(match_info)
 
 def capitalize_first_letter(value):
     value = str(value).strip()
@@ -120,13 +105,14 @@ def generate_pdf_tabulated(jobs_df):
     style_title = ParagraphStyle('Title', parent=styles['Heading1'], alignment=1, spaceAfter=5, fontSize=18)
     style_text = ParagraphStyle('Text', parent=styles['Normal'], spaceAfter=10, fontSize=11, leading=15)
 
+    # Title
     title_html = '<font color="darkblue">Suyog</font><font color="maroon">+</font>'
     elements.append(Paragraph(title_html, style_title))
     elements.append(Paragraph('<font color="darkblue">By DAIL NIEPMD</font>', style_title))
     elements.append(Spacer(1, 20))
 
     total_matches = len(jobs_df)
-    elements.append(Paragraph(f"Total Matches: {total_matches}", style_text))
+    elements.append(Paragraph(f"Total Jobs: {total_matches}", style_text))
     elements.append(Spacer(1, 20))
 
     for _, job in jobs_df.iterrows():
@@ -135,6 +121,9 @@ def generate_pdf_tabulated(jobs_df):
         elements.append(Paragraph(f"<b>Department:</b> {capitalize_first_letter(job.get('department','-'))}", style_text))
         elements.append(Paragraph(f"<b>Qualification Required:</b> {capitalize_first_letter(job.get('qualification_required','-'))}", style_text))
         elements.append(Paragraph(f"<b>Functional Requirements:</b> {capitalize_first_letter(job.get('functional_requirements','-'))}", style_text))
+        elements.append(Paragraph(f"<b>Match Status:</b> {'✅ Full Match' if job['match'] else '⚠️ Partial Match'}", style_text))
+        if not job['match']:
+            elements.append(Paragraph(f"<b>Reasons:</b> {job['reasons']}", style_text))
         elements.append(Spacer(1, 10))
 
     doc.build(elements)
@@ -155,24 +144,28 @@ department = st.selectbox("Select a department:", departments)
 selected_activities = st.multiselect("Select your functional abilities:", activities)
 
 if st.button("🔍 Find Jobs"):
-    jobs, warnings = filter_jobs(disability, subcategory, qualification, department, selected_activities)
-    
-    if warnings:
-        for w in warnings:
-            st.warning(w)
-    
+    jobs = filter_jobs(disability, subcategory, qualification, department, selected_activities)
     if len(jobs) == 0:
-        st.error("❌ No exact matches found. Showing closest jobs below.")
-        jobs = df.sample(min(10, len(df)))  # Show a few sample jobs as fallback
+        st.error("❌ No matching jobs found. Try selecting fewer filters or other criteria.")
     else:
-        st.success(f"✅ Found {len(jobs)} matching jobs.")
+        full_matches = jobs[jobs['match'] == True]
+        partial_matches = jobs[jobs['match'] == False]
 
-    pdf_buffer = generate_pdf_tabulated(jobs)
-    st.download_button(label="📄 Download Results as PDF", data=pdf_buffer, file_name="suyog_jobs.pdf", mime="application/pdf")
-    
-    if st.checkbox("🔊 Read summary aloud"):
-        tts = gTTS(f"Found {len(jobs)} matching jobs. Please check the PDF for details.", lang='en')
-        audio_buffer = io.BytesIO()
-        tts.write_to_fp(audio_buffer)
-        audio_buffer.seek(0)
-        st.audio(audio_buffer, format="audio/mp3")
+        st.success(f"✅ Full Matches: {len(full_matches)}")
+        st.info(f"⚠️ Partial Matches: {len(partial_matches)}")
+
+        # Display results in a table
+        st.dataframe(jobs[['designation','group','department','qualification_required','functional_requirements','match','reasons']])
+
+        # Download PDF
+        pdf_buffer = generate_pdf_tabulated(jobs)
+        st.download_button(label="📄 Download Results as PDF", data=pdf_buffer, file_name="suyog_jobs.pdf", mime="application/pdf")
+
+        # Read summary aloud
+        if st.checkbox("🔊 Read summary aloud"):
+            tts_text = f"Found {len(full_matches)} fully matching jobs and {len(partial_matches)} partially matching jobs. Please check the PDF for details."
+            tts = gTTS(tts_text, lang='en')
+            audio_buffer = io.BytesIO()
+            tts.write_to_fp(audio_buffer)
+            audio_buffer.seek(0)
+            st.audio(audio_buffer, format="audio/mp3")
