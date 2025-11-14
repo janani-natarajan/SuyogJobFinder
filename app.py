@@ -8,30 +8,61 @@ from gtts import gTTS
 import os
 import json
 
-# --------------------------- Load Dataset ---------------------------
+# --------------------------- Check / Create Dataset ---------------------------
 file_path = "cleaned_data.jsonl"
+
+if not os.path.exists(file_path):
+    sample_data = [
+        {
+            "designation": "Clerk",
+            "group": "Group C",
+            "department": "Administrative",
+            "qualification_required": "12th Standard",
+            "functional_requirements": "S Sitting, RW Reading & Writing, SE Seeing",
+            "disabilities": "Visual Impairment"
+        },
+        {
+            "designation": "Teacher",
+            "group": "Group B",
+            "department": "Education",
+            "qualification_required": "Graduate",
+            "functional_requirements": "S Sitting, ST Standing, H Hearing, C Communication",
+            "disabilities": "Hearing Impairment"
+        }
+    ]
+    with open(file_path, "w") as f:
+        for item in sample_data:
+            f.write(json.dumps(item) + "\n")
+
+# --------------------------- Load Dataset ---------------------------
 df = pd.read_json(file_path, lines=True)
 for col in df.columns:
     if df[col].dtype == object:
         df[col] = df[col].map(lambda x: x.strip() if isinstance(x, str) else x)
 
 # --------------------------- Options ---------------------------
-disabilities = ["Visual Impairment","Hearing Impairment","Physical Disabilities",
-"Neurological Disabilities","Blood Disorders","Intellectual and Developmental Disabilities",
-"Mental Illness","Multiple Disabilities"]
+disabilities = [
+    "Visual Impairment","Hearing Impairment","Physical Disabilities",
+    "Neurological Disabilities","Blood Disorders","Intellectual and Developmental Disabilities",
+    "Mental Illness","Multiple Disabilities"
+]
 
-intellectual_subcategories = ["Autism Spectrum Disorder (ASD M)",
-"Autism Spectrum Disorder (ASD MoD)","Intellectual Disability (ID)","Specific Learning Disability (SLD)",
-"Mental Illness"]
+intellectual_subcategories = [
+    "Autism Spectrum Disorder (ASD M)",
+    "Autism Spectrum Disorder (ASD MoD)",
+    "Intellectual Disability (ID)",
+    "Specific Learning Disability (SLD)",
+    "Mental Illness"
+]
 
 qualifications = ["10th Standard","12th Standard","Certificate","Diploma",
-"Graduate","Post Graduate","Doctorate"]
+                  "Graduate","Post Graduate","Doctorate"]
 
 departments = df["department"].dropna().unique().tolist()
 
 activities = ["S Sitting","ST Standing","W Walking","BN Bending","L Lifting","PP Pulling & Pushing",
-"KC Kneeling & Crouching","MF Manipulation with Fingers","RW Reading & Writing",
-"SE Seeing","H Hearing","C Communication"]
+              "KC Kneeling & Crouching","MF Manipulation with Fingers","RW Reading & Writing",
+              "SE Seeing","H Hearing","C Communication"]
 
 # --------------------------- Helper Functions ---------------------------
 def map_group(qualification):
@@ -43,53 +74,57 @@ def map_group(qualification):
     else:
         return ["Group D"]
 
-def filter_jobs(disability=None, subcategory=None, qualification=None, department=None, activities=None):
-    df_filtered = df.copy()
-    match_info = []
-
-    for _, job in df_filtered.iterrows():
-        match = True
-        reasons = []
+def filter_jobs_with_partial(disability=None, subcategory=None, qualification=None, department=None, activities=None):
+    full_matches = []
+    partial_matches = []
+    
+    for _, job in df.iterrows():
+        score = 0
+        total = 0
 
         # Disability check
-        if disability and "disabilities" in job:
-            if disability.lower() not in str(job["disabilities"]).lower():
-                match = False
-                reasons.append("Disability mismatch")
-
+        if disability:
+            total += 1
+            if disability.lower() in str(job.get('disabilities','')).lower():
+                score += 1
+        
         # Subcategory check
-        if subcategory and "subcategory" in job:
-            if subcategory.lower() not in str(job.get("subcategory", "")).lower():
-                match = False
-                reasons.append("Subcategory mismatch")
-
-        # Qualification group
-        if qualification and "group" in job:
+        if subcategory:
+            total += 1
+            if subcategory.lower() in str(job.get('subcategory','')).lower():
+                score += 1
+        
+        # Qualification / group check
+        if qualification:
+            total += 1
             allowed_groups = map_group(qualification)
-            if job["group"].strip() not in allowed_groups:
-                match = False
-                reasons.append("Group mismatch")
+            if str(job.get('group','')).strip() in allowed_groups:
+                score += 1
 
         # Department check
-        if department and "department" in job:
-            if department.lower() not in str(job["department"]).lower():
-                match = False
-                reasons.append("Department mismatch")
+        if department:
+            total += 1
+            if department.lower() in str(job.get('department','')).lower():
+                score += 1
 
-        # Functional abilities check
-        if activities and "functional_requirements" in job:
-            fr_norm = str(job["functional_requirements"]).upper()
+        # Activities check
+        if activities:
+            total += 1
+            fr = str(job.get('functional_requirements','')).upper()
+            fr_clean = ''.join([c for c in fr if c.isalpha() or c==' '])
             selected_norm = [a.split()[0].upper() for a in activities]
-            if not any(a in fr_norm for a in selected_norm):
-                match = False
-                reasons.append("Functional abilities mismatch")
+            if any(a in fr_clean for a in selected_norm):
+                score += 1
+        
+        # Decide full vs partial
+        if score == total and total>0:
+            full_matches.append(job)
+        elif score > 0:
+            partial_matches.append(job)
 
-        job_copy = job.copy()
-        job_copy["match"] = match
-        job_copy["reasons"] = ", ".join(reasons)
-        match_info.append(job_copy)
-
-    return pd.DataFrame(match_info)
+    full_df = pd.DataFrame(full_matches)
+    partial_df = pd.DataFrame(partial_matches)
+    return full_df, partial_df
 
 def capitalize_first_letter(value):
     value = str(value).strip()
@@ -97,7 +132,7 @@ def capitalize_first_letter(value):
         return value[0].upper() + value[1:]
     return value
 
-def generate_pdf_tabulated(jobs_df):
+def generate_pdf_tabulated(full_df, partial_df):
     buffer = io.BytesIO()
     doc = SimpleDocTemplate(buffer, pagesize=A3)
     elements = []
@@ -105,25 +140,27 @@ def generate_pdf_tabulated(jobs_df):
     style_title = ParagraphStyle('Title', parent=styles['Heading1'], alignment=1, spaceAfter=5, fontSize=18)
     style_text = ParagraphStyle('Text', parent=styles['Normal'], spaceAfter=10, fontSize=11, leading=15)
 
-    # Title
-    title_html = '<font color="darkblue">Suyog</font><font color="maroon">+</font>'
-    elements.append(Paragraph(title_html, style_title))
-    elements.append(Paragraph('<font color="darkblue">By DAIL NIEPMD</font>', style_title))
+    elements.append(Paragraph('<font color="darkblue">Suyog+</font> - By DAIL NIEPMD', style_title))
     elements.append(Spacer(1, 20))
 
-    total_matches = len(jobs_df)
-    elements.append(Paragraph(f"Total Jobs: {total_matches}", style_text))
-    elements.append(Spacer(1, 20))
-
-    for _, job in jobs_df.iterrows():
+    # Full Matches
+    elements.append(Paragraph(f"✅ Full Matches: {len(full_df)}", style_text))
+    for _, job in full_df.iterrows():
         elements.append(Paragraph(f"<b>Designation:</b> {capitalize_first_letter(job.get('designation','-'))}", style_text))
         elements.append(Paragraph(f"<b>Group:</b> {capitalize_first_letter(job.get('group','-'))}", style_text))
         elements.append(Paragraph(f"<b>Department:</b> {capitalize_first_letter(job.get('department','-'))}", style_text))
         elements.append(Paragraph(f"<b>Qualification Required:</b> {capitalize_first_letter(job.get('qualification_required','-'))}", style_text))
         elements.append(Paragraph(f"<b>Functional Requirements:</b> {capitalize_first_letter(job.get('functional_requirements','-'))}", style_text))
-        elements.append(Paragraph(f"<b>Match Status:</b> {'✅ Full Match' if job['match'] else '⚠️ Partial Match'}", style_text))
-        if not job['match']:
-            elements.append(Paragraph(f"<b>Reasons:</b> {job['reasons']}", style_text))
+        elements.append(Spacer(1, 10))
+
+    # Partial Matches
+    elements.append(Paragraph(f"⚠️ Partial Matches: {len(partial_df)}", style_text))
+    for _, job in partial_df.iterrows():
+        elements.append(Paragraph(f"<b>Designation:</b> {capitalize_first_letter(job.get('designation','-'))}", style_text))
+        elements.append(Paragraph(f"<b>Group:</b> {capitalize_first_letter(job.get('group','-'))}", style_text))
+        elements.append(Paragraph(f"<b>Department:</b> {capitalize_first_letter(job.get('department','-'))}", style_text))
+        elements.append(Paragraph(f"<b>Qualification Required:</b> {capitalize_first_letter(job.get('qualification_required','-'))}", style_text))
+        elements.append(Paragraph(f"<b>Functional Requirements:</b> {capitalize_first_letter(job.get('functional_requirements','-'))}", style_text))
         elements.append(Spacer(1, 10))
 
     doc.build(elements)
@@ -139,33 +176,23 @@ disability = st.selectbox("Select your disability:", disabilities)
 subcategory = None
 if disability == "Intellectual and Developmental Disabilities":
     subcategory = st.selectbox("Select your subcategory:", intellectual_subcategories)
+
 qualification = st.selectbox("Select your qualification:", qualifications)
 department = st.selectbox("Select a department:", departments)
 selected_activities = st.multiselect("Select your functional abilities:", activities)
 
 if st.button("🔍 Find Jobs"):
-    jobs = filter_jobs(disability, subcategory, qualification, department, selected_activities)
-    if len(jobs) == 0:
-        st.error("❌ No matching jobs found. Try selecting fewer filters or other criteria.")
-    else:
-        full_matches = jobs[jobs['match'] == True]
-        partial_matches = jobs[jobs['match'] == False]
+    full_jobs, partial_jobs = filter_jobs_with_partial(disability, subcategory, qualification, department, selected_activities)
+    
+    st.success(f"✅ Full Matches: {len(full_jobs)}")
+    st.warning(f"⚠️ Partial Matches: {len(partial_jobs)}")
 
-        st.success(f"✅ Full Matches: {len(full_matches)}")
-        st.info(f"⚠️ Partial Matches: {len(partial_matches)}")
+    pdf_buffer = generate_pdf_tabulated(full_jobs, partial_jobs)
+    st.download_button(label="📄 Download Results as PDF", data=pdf_buffer, file_name="suyog_jobs.pdf", mime="application/pdf")
 
-        # Display results in a table
-        st.dataframe(jobs[['designation','group','department','qualification_required','functional_requirements','match','reasons']])
-
-        # Download PDF
-        pdf_buffer = generate_pdf_tabulated(jobs)
-        st.download_button(label="📄 Download Results as PDF", data=pdf_buffer, file_name="suyog_jobs.pdf", mime="application/pdf")
-
-        # Read summary aloud
-        if st.checkbox("🔊 Read summary aloud"):
-            tts_text = f"Found {len(full_matches)} fully matching jobs and {len(partial_matches)} partially matching jobs. Please check the PDF for details."
-            tts = gTTS(tts_text, lang='en')
-            audio_buffer = io.BytesIO()
-            tts.write_to_fp(audio_buffer)
-            audio_buffer.seek(0)
-            st.audio(audio_buffer, format="audio/mp3")
+    if st.checkbox("🔊 Read summary aloud"):
+        tts = gTTS(f"Found {len(full_jobs)} full matches and {len(partial_jobs)} partial matches. Please check the PDF for details.", lang='en')
+        audio_buffer = io.BytesIO()
+        tts.write_to_fp(audio_buffer)
+        audio_buffer.seek(0)
+        st.audio(audio_buffer, format="audio/mp3")
