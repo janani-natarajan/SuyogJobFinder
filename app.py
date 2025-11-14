@@ -91,7 +91,6 @@ def map_group(qualification):
     else:
         return ["Group D"]
 
-# --------- IMPROVED filter_jobs ----------
 def filter_jobs(disability=None, subcategory=None, qualification=None, department=None, activities=None):
     df_filtered = df.copy()
 
@@ -128,6 +127,21 @@ def filter_jobs(disability=None, subcategory=None, qualification=None, departmen
         selected_norm = [a.split()[0].upper() for a in activities]
         mask_act = df_filtered["functional_norm"].apply(lambda fr: any(a in fr for a in selected_norm))
         df_filtered = df_filtered[mask_act]
+
+    # If nothing matches, relax filters to disability + qualification
+    if len(df_filtered) == 0:
+        df_filtered = df.copy()
+        if disability:
+            mask = pd.Series(False, index=df_filtered.index)
+            for col in df_filtered.columns:
+                if "disabilities" in col.lower():
+                    mask |= df_filtered[col].astype(str).str.lower().str.contains(disability.lower(), na=False)
+            df_filtered = df_filtered[mask]
+
+        if qualification and "group" in df_filtered.columns:
+            allowed_groups = map_group(qualification)
+            mask_group = df_filtered["group"].astype(str).str.strip().isin(allowed_groups)
+            df_filtered = df_filtered[mask_group]
 
     return df_filtered.reset_index(drop=True)
 
@@ -191,11 +205,11 @@ if st.button("🔍 Find Jobs"):
     jobs = filter_jobs(disability, subcategory, qualification, department, selected_activities)
 
     if len(jobs) == 0:
-        st.warning("⚠️ No matching jobs found. Try selecting fewer filters or other criteria.")
+        st.warning("⚠️ No jobs found, even after relaxing filters. Try fewer criteria.")
     else:
         st.success(f"✅ Found {len(jobs)} matching jobs.")
         
-        # Show all matches in a table
+        # Show matches in a table
         st.dataframe(jobs[['designation','group','department','qualification_required','functional_requirements','disabilities']])
         
         # PDF download
