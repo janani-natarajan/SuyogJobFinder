@@ -1,25 +1,41 @@
+# app.py — Suyog+ Job Finder with Department Suggestions
 import streamlit as st
 import pandas as pd
 import io
 from reportlab.lib.pagesizes import A3
-from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer
+from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle
+from reportlab.lib import colors
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from gtts import gTTS
 import os
-import json
+
+# --------------------------- Config ---------------------------
+st.set_page_config(page_title="Suyog+ Job Finder", page_icon="🧩", layout="wide")
 
 # --------------------------- Load Dataset ---------------------------
-file_path = "cleaned_data.jsonl"
-df = pd.read_json(file_path, lines=True)
-for col in df.columns:
-    if df[col].dtype == object:
-        df[col] = df[col].map(lambda x: x.strip() if isinstance(x, str) else x)
+DATA_FILE = "cleaned_data.jsonl"  # update path if needed
+
+if not os.path.exists(DATA_FILE):
+    st.error(f"Dataset '{DATA_FILE}' not found!")
+    st.stop()
+
+df = pd.read_json(DATA_FILE, lines=True)
+df.columns = [c.strip().lower() for c in df.columns]
+
+# Strip string columns
+for col in df.select_dtypes("object"):
+    df[col] = df[col].str.strip()
+
+# Ensure department & group columns exist
+df["department"] = df.get("department", pd.Series([None]*len(df)))
+df["group"] = df.get("group", pd.Series(["Group D"]*len(df)))
+departments = sorted([d for d in df["department"].dropna().unique()])
 
 # --------------------------- Options ---------------------------
 disabilities = [
-    "Visual Impairment","Hearing Impairment","Physical Disabilities",
-    "Neurological Disabilities","Blood Disorders","Intellectual and Developmental Disabilities",
-    "Mental Illness","Multiple Disabilities"
+    "Any", "Visual Impairment", "Hearing Impairment", "Physical Disabilities",
+    "Neurological Disabilities", "Blood Disorders", "Intellectual and Developmental Disabilities",
+    "Mental Illness", "Multiple Disabilities"
 ]
 
 intellectual_subcategories = [
@@ -30,156 +46,147 @@ intellectual_subcategories = [
     "Mental Illness"
 ]
 
-qualifications = ["10th Standard","12th Standard","Certificate","Diploma",
-"Graduate","Post Graduate","Doctorate"]
-
-departments = df["department"].dropna().unique().tolist()
-
-activities = [
-    "S Sitting","ST Standing","W Walking","BN Bending","L Lifting","PP Pulling & Pushing",
-    "KC Kneeling & Crouching","MF Manipulation with Fingers","RW Reading & Writing",
-    "SE Seeing","H Hearing","C Communication"
-]
+qualifications = ["Any", "10th Standard", "12th Standard", "Certificate", "Diploma",
+                  "Graduate", "Post Graduate", "Doctorate"]
 
 # --------------------------- Helper Functions ---------------------------
 def map_group(qualification):
-    q = qualification.strip().lower()
-    if q in ["graduate","post graduate","doctorate"]:
-        return ["Group A","Group B","Group C","Group D"]
-    elif q == "12th standard":
-        return ["Group C","Group D"]
-    else:
-        return ["Group D"]
+    """Map qualification to allowed groups (fixed)"""
+    if not qualification or qualification.lower() == "any":
+        return ["Group A", "Group B", "Group C", "Group D"]
+    q = qualification.lower()
+    if q in ["graduate", "post graduate", "doctorate"]:
+        return ["Group A", "Group B", "Group C", "Group D"]
+    if q == "12th standard":
+        return ["Group C", "Group D"]
+    return ["Group D"]
 
-def filter_jobs(disability=None, subcategory=None, qualification=None, department=None, activities=None):
-    full_matches = []
-    partial_matches = []
+def get_disability_text(job_row):
+    """Concatenate all disability-related fields"""
+    keys = [k for k in job_row.keys() if "category_of_disabilities" in k.lower()]
+    return " ".join(str(job_row.get(k, "")) for k in keys if pd.notna(job_row.get(k, "")))
 
-    for _, job in df.iterrows():
-        score = 0
-        total_criteria = 0
+# --------------------------- Job Classification ---------------------------
+def classify_jobs(df, department, qualification, disability, subcategory):
+    df_filtered = df.copy()
+    st.write("### Debug: Job counts after each filter")
+    st.write("Total jobs in dataset:", len(df_filtered))
 
-        # Disability
-        if disability:
-            total_criteria += 1
-            if "disabilities" in job and pd.notna(job["disabilities"]):
-                if disability.lower() in job["disabilities"].lower():
-                    score += 1
+    # Department filter
+    if department != "Any":
+        df_filtered = df_filtered[df_filtered["department"].str.contains(department, case=False, na=False)]
+    st.write("After department filter:", len(df_filtered))
 
-        # Subcategory
-        if subcategory:
-            total_criteria += 1
-            if "subcategory" in job and pd.notna(job["subcategory"]):
-                if subcategory.lower() in job["subcategory"].lower():
-                    score += 1
+    # Qualification → Group filter
+    allowed_groups = map_group(qualification)
+    df_filtered = df_filtered[df_filtered['group'].fillna('') \
+        .apply(lambda g: any(ag.lower() in g.lower() for ag in allowed_groups))]
+    st.write("After group/qualification filter:", len(df_filtered))
 
-        # Qualification Group
-        total_criteria += 1
-        allowed_groups = map_group(qualification)
-        if "group" in job and job["group"].strip() in allowed_groups:
-            score += 1
+    # Disability filter
+    if disability != "Any":
+        df_filtered = df_filtered[df_filtered.apply(
+            lambda row: disability.lower() in get_disability_text(row).lower(),
+            axis=1
+        )]
+    st.write("After disability filter:", len(df_filtered))
 
-        # Department
-        if department:
-            total_criteria += 1
-            if "department" in job and pd.notna(job["department"]):
-                if department.lower() in job["department"].lower():
-                    score += 1
+    # Subcategory filter
+    if disability == "Intellectual and Developmental Disabilities" and subcategory != "Any":
+        if 'subcategory' in df_filtered.columns:
+            df_filtered = df_filtered[df_filtered["subcategory"].str.lower() == subcategory.lower()]
+    st.write("After subcategory filter:", len(df_filtered))
 
-        # Activities
-        if activities and "functional_requirements" in job:
-            total_criteria += 1
-            fr = job["functional_requirements"].upper() if pd.notna(job["functional_requirements"]) else ""
-            selected_norm = [a.split()[0].upper() for a in activities]
-            if any(a in fr for a in selected_norm):
-                score += 1
+    # Fallback if no exact match
+    if df_filtered.empty:
+        st.warning("❌ No exact matches. Showing partial matches ignoring disability/subcategory.")
+        df_filtered = df.copy()
 
-        # Decide if full or partial match
-        if score == total_criteria:
-            full_matches.append(job)
-        elif score > 0:
-            partial_matches.append(job)
+    return df_filtered.reset_index(drop=True)
 
-    full_df = pd.DataFrame(full_matches)
-    partial_df = pd.DataFrame(partial_matches)
-    return full_df.reset_index(drop=True), partial_df.reset_index(drop=True)
-
-def capitalize_first_letter(value):
-    value = str(value).strip()
-    if value != '-':
-        return value[0].upper() + value[1:]
-    return value
-
-def generate_pdf_tabulated(jobs_df):
+# --------------------------- PDF Generator ---------------------------
+def generate_pdf(df_jobs):
     buffer = io.BytesIO()
     doc = SimpleDocTemplate(buffer, pagesize=A3)
-    elements = []
     styles = getSampleStyleSheet()
-    style_title = ParagraphStyle('Title', parent=styles['Heading1'], alignment=1, spaceAfter=5, fontSize=18)
-    style_text = ParagraphStyle('Text', parent=styles['Normal'], spaceAfter=10, fontSize=11, leading=15)
+    title_style = ParagraphStyle('title', parent=styles['Heading1'], alignment=1, fontSize=22)
+    cell_style = ParagraphStyle('cell', parent=styles['Normal'], fontSize=12)
 
-    title_html = '<font color="darkblue">Suyog</font><font color="maroon">+</font>'
-    elements.append(Paragraph(title_html, style_title))
-    elements.append(Paragraph('<font color="darkblue">By DAIL NIEPMD</font>', style_title))
-    elements.append(Spacer(1, 20))
+    elems = [Paragraph("🧩 Suyog+ Job Finder — Results", title_style), Spacer(1, 20)]
 
-    total_matches = len(jobs_df)
-    elements.append(Paragraph(f"Total Matches: {total_matches}", style_text))
-    elements.append(Spacer(1, 20))
+    data = [["Designation", "Department", "Group", "Qualification", "Disabilities", "Functions"]]
 
-    for _, job in jobs_df.iterrows():
-        elements.append(Paragraph(f"<b>Designation:</b> {capitalize_first_letter(job.get('designation','-'))}", style_text))
-        elements.append(Paragraph(f"<b>Group:</b> {capitalize_first_letter(job.get('group','-'))}", style_text))
-        elements.append(Paragraph(f"<b>Department:</b> {capitalize_first_letter(job.get('department','-'))}", style_text))
-        elements.append(Paragraph(f"<b>Qualification Required:</b> {capitalize_first_letter(job.get('qualification_required','-'))}", style_text))
-        elements.append(Paragraph(f"<b>Functional Requirements:</b> {capitalize_first_letter(job.get('functional_requirements','-'))}", style_text))
-        elements.append(Spacer(1, 10))
+    for _, row in df_jobs.iterrows():
+        dis_text = get_disability_text(row)
+        func_text = row.get("functional_requirements", "-") if "functional_requirements" in row else "-"
+        data.append([
+            Paragraph(str(row.get("designation", "-")), cell_style),
+            Paragraph(str(row.get("department", "-")), cell_style),
+            Paragraph(str(row.get("group", "-")), cell_style),
+            Paragraph(str(row.get("qualification_required", "-")), cell_style),
+            Paragraph(dis_text, cell_style),
+            Paragraph(str(func_text), cell_style)
+        ])
 
-    doc.build(elements)
+    table = Table(data, repeatRows=1, colWidths=[120, 120, 60, 80, 150, 200])
+    table.setStyle(TableStyle([
+        ("BACKGROUND", (0, 0), (-1, 0), colors.lightgrey),
+        ("GRID", (0, 0), (-1, -1), 1, colors.black)
+    ]))
+
+    elems.append(table)
+    doc.build(elems)
     buffer.seek(0)
     return buffer
 
-# --------------------------- Streamlit UI ---------------------------
-st.set_page_config(page_title="Suyog+ Job Finder", page_icon="🧩", layout="centered")
-st.title("🧩 Suyog+ Job Finder for Persons with Disabilities")
-st.write("Find government-identified jobs suitable for persons with disabilities in India.")
+# --------------------------- Display Results ---------------------------
+def display_results(df_jobs):
+    if df_jobs.empty:
+        st.error("❌ No jobs to display")
+        return
 
-disability = st.selectbox("Select your disability:", disabilities)
+    st.success(f"Found {len(df_jobs)} matching jobs")
+
+    pdf_buffer = generate_pdf(df_jobs)
+    st.download_button("📄 Download PDF", pdf_buffer, file_name="suyog_matches.pdf", mime="application/pdf")
+
+    tts = gTTS(f"Found {len(df_jobs)} matching jobs.", lang='en')
+    abuf = io.BytesIO()
+    tts.write_to_fp(abuf)
+    abuf.seek(0)
+    st.audio(abuf, format="audio/mp3")
+
+# --------------------------- Streamlit UI ---------------------------
+st.sidebar.header("Filter Criteria")
+
+# Filter-based job search
+disability = st.sidebar.selectbox("Disability", disabilities)
 subcategory = None
 if disability == "Intellectual and Developmental Disabilities":
-    subcategory = st.selectbox("Select your subcategory:", intellectual_subcategories)
+    subcategory = st.sidebar.selectbox("Subcategory", ["Any"] + intellectual_subcategories)
 
-qualification = st.selectbox("Select your qualification:", qualifications)
-department = st.selectbox("Select a department:", departments)
-selected_activities = st.multiselect("Select your functional abilities:", activities)
+qualification = st.sidebar.selectbox("Qualification", qualifications)
 
-if st.button("🔍 Find Jobs"):
-    full_jobs, partial_jobs = filter_jobs(disability, subcategory, qualification, department, selected_activities)
+dept_search = st.sidebar.text_input("Search Department")
+filtered_depts = [d for d in departments if dept_search.lower() in d.lower()] if dept_search else departments
+department = st.sidebar.selectbox("Department", ["Any"] + filtered_depts)
+
+st.title("🧩 Suyog+ Job Finder")
+
+if st.sidebar.button("🔍 Find Jobs"):
+    matched = classify_jobs(df, department, qualification, disability, subcategory)
+    display_results(matched)
+
+# Department-based suggestions
+st.sidebar.header("💡 Department-based Suggestions")
+dept_search_pref = st.sidebar.text_input("Preferred department for suggestions")
+
+if dept_search_pref:
+    suggested_jobs = df[df["department"].str.contains(dept_search_pref, case=False, na=False)].reset_index(drop=True)
     
-    if len(full_jobs) == 0 and len(partial_jobs) == 0:
-        st.error("❌ No matching jobs found. Try selecting fewer filters or other criteria.")
-    
-    if len(full_jobs) > 0:
-        st.success(f"✅ Full Matches: {len(full_jobs)}")
-        st.dataframe(full_jobs)
-    
-    if len(partial_jobs) > 0:
-        st.warning(f"⚠️ Partial Matches: {len(partial_jobs)}")
-        st.dataframe(partial_jobs)
-    
-    # Generate PDF for all matches
-    combined_jobs = pd.concat([full_jobs, partial_jobs], ignore_index=True)
-    if len(combined_jobs) > 0:
-        pdf_buffer = generate_pdf_tabulated(combined_jobs)
-        st.download_button(
-            label="📄 Download All Matching Jobs as PDF",
-            data=pdf_buffer,
-            file_name="suyog_jobs.pdf",
-            mime="application/pdf"
-        )
-        if st.checkbox("🔊 Read summary aloud"):
-            tts = gTTS(f"Found {len(combined_jobs)} matching jobs. Please check the PDF for details.", lang='en')
-            audio_buffer = io.BytesIO()
-            tts.write_to_fp(audio_buffer)
-            audio_buffer.seek(0)
-            st.audio(audio_buffer, format="audio/mp3")
+    if suggested_jobs.empty:
+        st.warning(f"❌ No jobs found in '{dept_search_pref}' department.")
+    else:
+        st.success(f"Found {len(suggested_jobs)} jobs in '{dept_search_pref}' department.")
+        for idx, row in suggested_jobs.iterrows():
+            st.write(f"**{row.get('designation','-')}** | Group: {row.get('group','-')} | Qualification: {row.get('qualification_required','-')}")
