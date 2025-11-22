@@ -104,41 +104,77 @@ def classify_jobs(df, department, qualification, disability, subcategory):
 
     return df_filtered.reset_index(drop=True)
 
-# --------------------------- PDF Generator ---------------------------
-def generate_pdf(df_jobs):
+# --------------------------- Safe Capitalization ---------------------------
+def capitalize_first_letter(value):
+    if value is None:
+        return "-"
+    value = str(value).strip()
+    if value == "":
+        return "-"
+    return value[0].upper() + value[1:]
+
+
+# --------------------------- PDF Generator (No More Errors) ---------------------------
+def generate_pdf_tabulated(jobs):
     buffer = io.BytesIO()
     doc = SimpleDocTemplate(buffer, pagesize=A3)
+
     styles = getSampleStyleSheet()
-    title_style = ParagraphStyle('title', parent=styles['Heading1'], alignment=1, fontSize=22)
-    cell_style = ParagraphStyle('cell', parent=styles['Normal'], fontSize=12)
+    style_title = ParagraphStyle(
+        'title',
+        parent=styles['Heading1'],
+        fontSize=22,
+        alignment=1
+    )
+    style_text = ParagraphStyle(
+        'text',
+        parent=styles['Normal'],
+        fontSize=12,
+        leading=16
+    )
 
-    elems = [Paragraph("🧩 Suyog+ Job Finder — Results", title_style), Spacer(1, 20)]
+    elements = []
+    elements.append(Paragraph("🧩 Suyog+ Job Finder — Results", style_title))
+    elements.append(Spacer(1, 20))
 
-    data = [["Designation", "Department", "Group", "Qualification", "Disabilities", "Functions"]]
+    # Create a table
+    table_data = [
+        ["Designation", "Department", "Group", "Qualification", "Disabilities", "Functions"]
+    ]
 
-    for _, row in df_jobs.iterrows():
-        dis_text = get_disability_text(row)
-        func_text = row.get("functional_requirements", "-") if "functional_requirements" in row else "-"
-        data.append([
-            Paragraph(str(row.get("designation", "-")), cell_style),
-            Paragraph(str(row.get("department", "-")), cell_style),
-            Paragraph(str(row.get("group", "-")), cell_style),
-            Paragraph(str(row.get("qualification_required", "-")), cell_style),
-            Paragraph(dis_text, cell_style),
-            Paragraph(str(func_text), cell_style)
+    for _, job in jobs.iterrows():
+        designation = capitalize_first_letter(job.get("designation", "-"))
+        department = capitalize_first_letter(job.get("department", "-"))
+        group = capitalize_first_letter(job.get("group", "-"))
+        qualification = capitalize_first_letter(job.get("qualification_required", "-"))
+
+        disabilities = job.get("category_of_disabilities", "")
+        disabilities = capitalize_first_letter(disabilities)
+
+        functions = job.get("functional_requirements", "-")
+        functions = capitalize_first_letter(functions)
+
+        table_data.append([
+            Paragraph(designation, style_text),
+            Paragraph(department, style_text),
+            Paragraph(group, style_text),
+            Paragraph(qualification, style_text),
+            Paragraph(disabilities, style_text),
+            Paragraph(functions, style_text),
         ])
 
-    table = Table(data, repeatRows=1, colWidths=[120, 120, 60, 80, 150, 200])
+    table = Table(table_data, repeatRows=1, colWidths=[120, 120, 60, 80, 150, 200])
     table.setStyle(TableStyle([
         ("BACKGROUND", (0, 0), (-1, 0), colors.lightgrey),
-        ("GRID", (0, 0), (-1, -1), 1, colors.black)
+        ("GRID", (0, 0), (-1, -1), 1, colors.black),
+        ("VALIGN", (0, 0), (-1, -1), "TOP"),
     ]))
 
-    elems.append(table)
-    doc.build(elems)
+    elements.append(table)
+    doc.build(elements)
+
     buffer.seek(0)
     return buffer
-
 # --------------------------- Display Results ---------------------------
 def display_results(df_jobs):
     if df_jobs.empty:
