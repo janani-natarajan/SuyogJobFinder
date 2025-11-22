@@ -1,41 +1,185 @@
-# app.py — Suyog+ Job Finder (Safe PDF)
+# Suyog+ Web App (Streamlit)
+# Converted from Telegram bot to a single-file Streamlit website
+# Features implemented to match the bot behavior:
+# - Upload JSON/JSONL dataset
+# - Select disability, (if intellectual -> subcategory), qualification, department
+# - Pick functional activities (buttons + text/voice transcription)
+# - Filter jobs using same rules and generate a PDF of results
+# - Text-to-speech for announcements (gTTS)
+
 import streamlit as st
 import pandas as pd
 import io
+import json
+import time
 from reportlab.lib.pagesizes import A3
-from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle
-from reportlab.lib import colors
+from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+from reportlab.lib import colors
+from textwrap import wrap
+from reportlab.lib import colors
 from gtts import gTTS
-import os
+import speech_recognition as sr
+from pydub import AudioSegment
 
-# --------------------------- Config ---------------------------
-st.set_page_config(page_title="Suyog+ Job Finder", page_icon="🧩", layout="wide")
+# --------------------------- Auto-load cleaned_data.jsonl ---------------------------
+DEFAULT_DATA_PATH = r"C:\Users\ADMIN\Documents\SuyogJobFinder\cleaned_data.jsonl"
 
-# --------------------------- Load Dataset ---------------------------
-DATA_FILE = "cleaned_data.jsonl"
+def auto_load_default():
+    try:
+        return pd.read_json(DEFAULT_DATA_PATH, lines=True)
+    except Exception as e:
+        st.error(f"Auto-load failed: {e}")
+        return None
 
-if not os.path.exists(DATA_FILE):
-    st.error(f"Dataset '{DATA_FILE}' not found!")
+# ----------------------------------------------------------------------
+
+st.set_page_config(page_title="Suyog+ Job Finder", layout="wide")
+
+# --------------------------- 1. Helper utilities ---------------------------
+@st.cache_data
+def load_dataframe_from_bytes(uploaded_bytes, filename):
+    try:
+        # try JSON lines
+        df = pd.read_json(io.BytesIO(uploaded_bytes), lines=True)
+    except ValueError:
+        # try normal JSON
+        try:
+            data = json.loads(uploaded_bytes.decode('utf-8'))
+            df = pd.DataFrame(data)
+        except Exception as e:
+            raise e
+    # normalize string columns
+    for col in df.columns:
+        if df[col].dtype == object:
+            df[col] = df[col].map(lambda x: x.strip() if isinstance(x, str) else x)
+    return df
+
+
+def map_group(qualification):
+    q = str(qualification).strip().lower()
+    if q in ["graduate", "post graduate", "doctorate"]:
+        return ["Group A", "Group B", "Group C", "Group D"]
+    elif q == "12th standard":
+        return ["Group C", "Group D"]
+    elif q == "10th standard":
+        return ["Group D"]
+    else:
+        return ["Group D"]
+
+
+def filter_jobs(df, disability=None, subcategory=None, qualification=None, department=None, activities=None):
+    df_filtered = df.copy()
+
+    if disability:
+        d = disability.strip().lower()
+        mask = pd.Series(False, index=df_filtered.index)
+        for col in df_filtered.columns:
+            if "disabilities" in col.lower():
+                mask |= df_filtered[col].astype(str).str.lower().str.contains(d, regex=False, na=False)
+        if mask.any():
+            df_filtered = df_filtered[mask]
+
+    if subcategory:
+        sub_lower = subcategory.strip().lower()
+        mask_sub = pd.Series(False, index=df_filtered.index)
+        for col in df_filtered.columns:
+            if "subcategory" in col.lower():
+                mask_sub |= df_filtered[col].astype(str).str.lower().str.contains(sub_lower, regex=False, na=False)
+        if mask_sub.any():
+            df_filtered = df_filtered[mask_sub]
+
+    allowed_groups = map_group(qualification) if qualification else []
+    if allowed_groups and "group" in df_filtered.columns:
+        mask_group = df_filtered["group"].astype(str).str.strip().isin(allowed_groups)
+        if mask_group.any():
+            df_filtered = df_filtered[mask_group]
+
+    if department and "department" in df_filtered.columns:
+        dep_lower = department.strip().lower()
+        mask_dep = df_filtered["department"].astype(str).str.lower().str.contains(dep_lower, regex=False, na=False)
+        if mask_dep.any():
+            df_filtered = df_filtered[mask_dep]
+
+    if activities and "functional_requirements" in df_filtered.columns:
+        # normalize functional requirements
+        df_filtered = df_filtered.copy()
+        df_filtered["functional_norm"] = df_filtered["functional_requirements"].astype(str).str.upper().str.replace(r'[^A-Z ]', '', regex=True)
+        selected_norm = [a.split()[0].upper() for a in activities]
+        mask_act = df_filtered["functional_norm"].apply(lambda fr: any(a in fr for a in selected_norm))
+        if mask_act.any():
+            df_filtered = df_filtered[mask_act]
+
+    return df_filtered.reset_index(drop=True)
+
+
+def generate_pdf_tabulated(jobs_df):
+    buffer = io.BytesIO()
+    doc = SimpleDocTemplate(buffer, pagesize=A3, rightMargin=50, leftMargin=50, topMargin=50, bottomMargin=50)
+    elements = []
+    styles = getSampleStyleSheet()
+
+    style_title = ParagraphStyle('Title', parent=styles['Heading1'], alignment=1, spaceAfter=5, fontSize=18)
+    style_heading2 = ParagraphStyle('Heading2', parent=styles['Heading2'], spaceAfter=10, fontSize=14, textColor=colors.darkblue)
+    style_heading3 = ParagraphStyle('Heading3', parent=styles['Heading3'], spaceAfter=8, fontSize=13, textColor=colors.darkgreen)
+    style_heading4 = ParagraphStyle('Heading4', parent=styles['Heading4'], spaceAfter=6, fontSize=12, textColor=colors.darkred)
+    style_text = ParagraphStyle('Text', parent=styles['Normal'], spaceAfter=10, fontSize=11, leading=15)
+
+    title_html = '<font color="darkblue">Suyog</font><font color="maroon">+</font>'
+    elements.append(Paragraph(title_html, style_title))
+    elements.append(Paragraph('<font color="darkblue">By DAIL NIEPMD</font>', style_title))
+    elements.append(Spacer(1, 10))
+    elements.append(Paragraph(f"Total Matches: {len(jobs_df)}", styles['Heading1']))
+    elements.append(Spacer(1, 20))
+
+    for _, job in jobs_df.iterrows():
+        designation = str(job.get('designation', '-')).capitalize()
+        group = str(job.get('group', '-')).capitalize()
+        department = str(job.get('department', '-')).capitalize()
+
+        elements.append(Paragraph(f"Designation: {designation}", style_heading2))
+        elements.append(Paragraph(f"Group: {group}", style_heading3))
+        elements.append(Paragraph(f"Department: {department}", style_heading4))
+        elements.append(Spacer(1, 10))
+
+        job_data = [
+            ("Qualification Required", job.get('qualification_required', '-')),
+            ("Functional Requirements", job.get('functional_requirements', '-')),
+            ("Disabilities Supported", " ".join([str(job.get(col, '')) for col in jobs_df.columns if "disabilities" in col.lower()])),
+            ("Nature of Work", job.get('nature_of_work', '-')),
+            ("Working Conditions", job.get('working_conditions', '-'))
+        ]
+        for field, value in job_data:
+            wrapped_lines = "<br/>".join(wrap(str(value).capitalize(), 100))
+            elements.append(Paragraph(f"<b>{field}:</b> {wrapped_lines}", style_text))
+        elements.append(Spacer(1, 25))
+        elements.append(Paragraph("<hr/>", style_text))
+
+    doc.build(elements)
+    buffer.seek(0)
+    return buffer.getvalue()
+
+
+# --------------------------- 2. UI & App State ---------------------------
+if 'uploaded_df' not in st.session_state:
+    st.session_state['uploaded_df'] = None
+
+st.title("Suyog+ — Job Finder for Persons with Disabilities")
+st.markdown("Upload your cleaned JSON/JSONL dataset and use the controls to find matches.")
+
+# Auto-loaded dataset replaces upload UI
+st.session_state['uploaded_df'] = auto_load_default()
+if st.session_state['uploaded_df'] is None:
+    st.error("Default dataset could not be loaded. Please check the file path.")
     st.stop()
 
-df = pd.read_json(DATA_FILE, lines=True)
-df.columns = [c.strip().lower() for c in df.columns]
+# derived options
+df = st.session_state['uploaded_df']
 
-# Strip string columns
-for col in df.select_dtypes("object"):
-    df[col] = df[col].str.strip()
-
-# Ensure department & group columns exist
-df["department"] = df.get("department", pd.Series([None]*len(df)))
-df["group"] = df.get("group", pd.Series(["Group D"]*len(df)))  # default group if missing
-
-departments = sorted([d for d in df["department"].dropna().unique()])
-
-# --------------------------- Options ---------------------------
 disabilities = [
-    "Any", "Visual Impairment", "Hearing Impairment", "Physical Disabilities",
-    "Neurological Disabilities", "Blood Disorders", "Intellectual and Developmental Disabilities",
+    "Visual Impairment", "Hearing Impairment", "Physical Disabilities",
+    "Neurological Disabilities", "Blood Disorders",
+    "Intellectual and Developmental Disabilities",
     "Mental Illness", "Multiple Disabilities"
 ]
 
@@ -47,142 +191,117 @@ intellectual_subcategories = [
     "Mental Illness"
 ]
 
-qualifications = ["Any", "10th Standard", "12th Standard", "Certificate", "Diploma",
+qualifications = ["10th Standard", "12th Standard", "Certificate", "Diploma",
                   "Graduate", "Post Graduate", "Doctorate"]
 
-# --------------------------- Helper Functions ---------------------------
-def capitalize_first_letter(value):
-    """Safe capitalization of strings"""
-    if not value:
-        return "-"
-    value = str(value).strip()
-    if not value:
-        return "-"
-    return value[0].upper() + value[1:]
+departments = df["department"].dropna().unique().tolist() if "department" in df.columns else []
+activities_list = ["S Sitting", "ST Standing", "W Walking", "BN Bending", "L Lifting", "PP Pulling & Pushing",
+                   "KC Kneeling & Crouching", "MF Manipulation with Fingers", "RW Reading & Writing",
+                   "SE Seeing", "H Hearing", "C Communication"]
 
-def map_group(qualification):
-    if not qualification or qualification.lower() == "any":
-        return ["Group A", "Group B", "Group C", "Group D"]
-    q = qualification.lower()
-    if q in ["graduate", "post graduate", "doctorate"]:
-        return ["Group A", "Group B", "Group C", "Group D"]
-    if q == "12th standard":
-        return ["Group C", "Group D"]
-    return ["Group D"]
+# Form for user inputs
+with st.form("job_search_form"):
+    col1, col2 = st.columns(2)
+    with col1:
+        disability = st.selectbox("Select your type of disability", disabilities)
+        subcategory = None
+        if disability == "Intellectual and Developmental Disabilities":
+            subcategory = st.selectbox("Select subcategory", intellectual_subcategories)
+    with col2:
+        qualification = st.selectbox("Select highest qualification", qualifications)
+        department = st.selectbox("Select department", departments)
 
-def get_disability_text(job_row):
-    keys = [k for k in job_row.keys() if "category_of_disabilities" in k.lower()]
-    return " ".join(str(job_row.get(k, "-")) for k in keys if pd.notna(job_row.get(k, ""))) or "-"
+    st.write("Select functional activities (click to add). You can also paste codes like 'S, W' into the textbox below or upload a voice note to transcribe.")
+    # activities as toggles
+    selected_activities = st.multiselect("Functional activities", activities_list)
+    activity_text = st.text_input("Or type/paste activity codes or names (e.g., 'S Sitting, W Walking')")
 
-# --------------------------- Classify Jobs ---------------------------
-def classify_jobs(df, department, qualification, disability, subcategory):
-    df_filtered = df.copy()
-    st.write("### Debug: Job counts after each filter")
-    st.write("Total jobs in dataset:", len(df_filtered))
+    # Audio upload for voice transcription
+    audio_file = st.file_uploader("Upload a voice note (ogg/mp3/wav) to transcribe activities (optional)", type=['ogg','mp3','wav'])
 
-    # Department filter
-    if department != "Any":
-        df_filtered = df_filtered[df_filtered["department"].str.contains(department, case=False, na=False)]
-    st.write("After department filter:", len(df_filtered))
+    submitted = st.form_submit_button("Search jobs")
 
-    # Qualification → Group filter
-    allowed_groups = map_group(qualification)
-    df_filtered = df_filtered[df_filtered["group"].apply(
-        lambda g: any(ag.lower() in str(g).lower() for ag in allowed_groups)
-    )]
-    st.write("After group/qualification filter:", len(df_filtered))
+# process transcription if provided
+transcribed_text = ""
+if audio_file is not None:
+    try:
+        # Convert to WAV (if needed) and transcribe
+        tmp_bytes = audio_file.read()
+        ext = audio_file.name.split('.')[-1].lower()
+        wav_bytes = None
+        if ext == 'wav':
+            wav_bytes = tmp_bytes
+        else:
+            # use pydub to convert
+            audio_segment = AudioSegment.from_file(io.BytesIO(tmp_bytes), format=ext)
+            out_buf = io.BytesIO()
+            audio_segment.export(out_buf, format='wav')
+            wav_bytes = out_buf.getvalue()
 
-    # Disability filter
-    if disability != "Any":
-        df_filtered = df_filtered[df_filtered.apply(
-            lambda row: disability.lower() in get_disability_text(row).lower(),
-            axis=1
-        )]
-    st.write("After disability filter:", len(df_filtered))
+        recognizer = sr.Recognizer()
+        with sr.AudioFile(io.BytesIO(wav_bytes)) as source:
+            audio_data = recognizer.record(source)
+        transcribed_text = recognizer.recognize_google(audio_data)
+        st.info(f"🗣️ Transcribed: {transcribed_text}")
+    except sr.UnknownValueError:
+        st.warning("Could not understand the audio.")
+    except Exception as e:
+        st.error(f"Transcription failed: {e}")
 
-    # Subcategory filter
-    if disability == "Intellectual and Developmental Disabilities" and subcategory != "Any":
-        df_filtered = df_filtered[df_filtered["subcategory"].str.lower() == subcategory.lower()]
-    st.write("After subcategory filter:", len(df_filtered))
+# Combine activities from selections, text and transcription
+combined_activities = list(selected_activities)
+if activity_text:
+    # parse codes or names
+    tokens = [w.strip() for w in activity_text.replace(',', ' ').split() if w.strip()]
+    # attempt to match with activities_list
+    for t in tokens:
+        # match by code or substring
+        for act in activities_list:
+            if t.upper() in act.upper() or act.split()[0].upper() == t.upper():
+                if act not in combined_activities:
+                    combined_activities.append(act)
 
-    return df_filtered.reset_index(drop=True)
+if transcribed_text:
+    tokens = [w.strip() for w in transcribed_text.replace(',', ' ').split() if w.strip()]
+    for t in tokens:
+        for act in activities_list:
+            if t.upper() in act.upper() or act.split()[0].upper() == t.upper():
+                if act not in combined_activities:
+                    combined_activities.append(act)
 
-# --------------------------- PDF Generator ---------------------------
-def generate_pdf(df_jobs):
-    buffer = io.BytesIO()
-    doc = SimpleDocTemplate(buffer, pagesize=A3)
+# When user submits form, run search
+if submitted:
+    df_results = filter_jobs(
+        df=df,
+        disability=disability,
+        subcategory=subcategory,
+        qualification=qualification,
+        department=department,
+        activities=combined_activities
+    )
 
-    styles = getSampleStyleSheet()
-    title_style = ParagraphStyle('title', parent=styles['Heading1'], alignment=1, fontSize=22)
-    cell_style = ParagraphStyle('cell', parent=styles['Normal'], fontSize=12)
+    if df_results.empty:
+        st.warning("😞 Sorry, no jobs matched your profile.")
+        # TTS: produce an audio file saying sorry
+        tts = gTTS(text="Sorry, no jobs matched your profile.", lang='en')
+        tts_buf = io.BytesIO()
+        tts.write_to_fp(tts_buf)
+        tts_buf.seek(0)
+        st.audio(tts_buf.read(), format='audio/mp3')
+    else:
+        st.success(f"✅ {len(df_results)} jobs matched your profile.")
+        # show a preview of matches
+        st.dataframe(df_results.head(50))
+        # generate pdf bytes
+        pdf_bytes = generate_pdf_tabulated(df_results)
+        st.download_button("Download PDF with matches", data=pdf_bytes, file_name="job_matches.pdf", mime='application/pdf')
+        # TTS: confirmation
+        tts = gTTS(text=f"{len(df_results)} jobs matched your profile. PDF is ready to download.", lang='en')
+        tts_buf = io.BytesIO()
+        tts.write_to_fp(tts_buf)
+        tts_buf.seek(0)
+        st.audio(tts_buf.read(), format='audio/mp3')
 
-    elems = [Paragraph("🧩 Suyog+ Job Finder — Results", title_style), Spacer(1, 20)]
-
-    data = [["Designation", "Department", "Group", "Qualification", "Disabilities", "Functions"]]
-
-    for _, row in df_jobs.iterrows():
-        designation = capitalize_first_letter(row.get("designation", "-"))
-        department = capitalize_first_letter(row.get("department", "-"))
-        group = capitalize_first_letter(row.get("group", "-"))
-        qualification = capitalize_first_letter(row.get("qualification_required", "-"))
-        functions = capitalize_first_letter(row.get("functional_requirements", "-"))
-
-        disabilities = get_disability_text(row)
-
-        data.append([
-            Paragraph(designation, cell_style),
-            Paragraph(department, cell_style),
-            Paragraph(group, cell_style),
-            Paragraph(qualification, cell_style),
-            Paragraph(disabilities, cell_style),
-            Paragraph(functions, cell_style)
-        ])
-
-    table = Table(data, repeatRows=1, colWidths=[120, 120, 60, 80, 150, 200])
-    table.setStyle(TableStyle([
-        ("BACKGROUND", (0, 0), (-1, 0), colors.lightgrey),
-        ("GRID", (0, 0), (-1, -1), 1, colors.black),
-        ("VALIGN", (0, 0), (-1, -1), "TOP")
-    ]))
-
-    elems.append(table)
-    doc.build(elems)
-    buffer.seek(0)
-    return buffer
-
-# --------------------------- Display Results ---------------------------
-def display_results(df_jobs):
-    if df_jobs.empty:
-        st.error("❌ No matching jobs found")
-        return
-
-    st.success(f"Found {len(df_jobs)} matching jobs")
-
-    pdf_buffer = generate_pdf(df_jobs)
-    st.download_button("📄 Download PDF", pdf_buffer, file_name="suyog_matches.pdf", mime="application/pdf")
-
-    tts = gTTS(f"Found {len(df_jobs)} matching jobs.", lang='en')
-    abuf = io.BytesIO()
-    tts.write_to_fp(abuf)
-    abuf.seek(0)
-    st.audio(abuf, format="audio/mp3")
-
-# --------------------------- Streamlit UI ---------------------------
-st.sidebar.header("Filter Criteria")
-
-disability = st.sidebar.selectbox("Disability", disabilities)
-subcategory = None
-if disability == "Intellectual and Developmental Disabilities":
-    subcategory = st.sidebar.selectbox("Subcategory", ["Any"] + intellectual_subcategories)
-
-qualification = st.sidebar.selectbox("Qualification", qualifications)
-
-dept_search = st.sidebar.text_input("Search Department")
-filtered_depts = [d for d in departments if dept_search.lower() in d.lower()] if dept_search else departments
-department = st.sidebar.selectbox("Department", ["Any"] + filtered_depts)
-
-st.title("🧩 Suyog+ Job Finder")
-
-if st.sidebar.button("🔍 Find Jobs"):
-    matched = classify_jobs(df, department, qualification, disability, subcategory)
-    display_results(matched)
+# Footer
+st.markdown("---")
+st.caption("Converted from Telegram bot logic — same filtering and PDF output. To run locally: `streamlit run suyog_plus_streamlit_app.py`.")
