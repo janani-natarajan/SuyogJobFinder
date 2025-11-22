@@ -1,0 +1,78 @@
+# -------------------------
+# Python Cache & Build Files
+# -------------------------
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.so
+*.dll
+
+# -------------------------
+# Virtual Environments
+# -------------------------
+env/
+venv/
+.venv/
+ENV/
+env.bak/
+venv.bak/
+
+# -------------------------
+# Streamlit Cache
+# -------------------------
+.streamlit/
+**/.streamlit/
+
+# -------------------------
+# OS Files (Windows & Mac)
+# -------------------------
+Thumbs.db
+.DS_Store
+
+# -------------------------
+# Logs & Temp files
+# -------------------------
+*.log
+*.tmp
+*.temp
+*~
+
+# -------------------------
+# Jupyter & Notebook Stuff
+# -------------------------
+.ipynb_checkpoints/
+*.ipynb
+
+# -------------------------
+# Large binaries / dangerous files
+# -------------------------
+*.exe
+*.msi
+*.zip
+*.tar
+*.gz
+*.7z
+*.whl
+
+# Do NOT upload ffmpeg binaries
+ffmpeg*
+imageio_ffmpeg/binaries/
+
+# -------------------------
+# Ignore local environment variables
+# -------------------------
+.env
+*.env
+
+# -------------------------
+# Project-specific excludes
+# -------------------------
+# Ignore any local ML model binaries
+*.h5
+*.pb
+*.onnx
+*.pth
+
+# Ignore dataset backups
+data_backup/
