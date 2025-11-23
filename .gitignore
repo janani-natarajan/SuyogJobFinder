@@ -1,34 +1,27 @@
-# Python virtual environments
+# Ignore Python virtual environment
 env/
-venv/
-.venv/
 
-# Python cache
+# Ignore large binaries
+*.exe
+*.dll
+
+# Ignore Python cache
 __pycache__/
 *.py[cod]
-*$py.class
 
-# System files
+# Ignore system files
 .DS_Store
 Thumbs.db
 
-# Logs
+# Ignore logs
 *.log
 
-# Jupyter notebooks checkpoints
-.ipynb_checkpoints/
+# Ignore dataset if you want (optional)
+cleaned_data.jsonl
 
-# Streamlit cache
-.streamlit/
-
-# Dataset / large files (optional if you want to exclude from repo)
-# cleaned_data.jsonl
-
-# Generated PDFs & audio
+# Ignore PDFs
 *.pdf
-*.mp3
-*.wav
-*.ogg
 
-# Large binaries
-env/Lib/site-packages/
+# Ignore audio files
+*.wav
+*.mp3
