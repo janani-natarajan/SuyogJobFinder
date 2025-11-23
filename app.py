@@ -1,41 +1,38 @@
 # Suyog+ Web App (Streamlit) — Cloud-ready
-# This version removes Python-side speech_recognition/pydub and uses
-# a browser-based Web Speech API recorder for voice input (client-side).
+# Uses browser-side speech recognition (Web Speech API) instead of Python STT.
 
 import streamlit as st
 import pandas as pd
 import io
 import json
-import time
 from reportlab.lib.pagesizes import A3
 from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.lib import colors
 from textwrap import wrap
-from reportlab.lib import colors
 from gtts import gTTS
-
 import streamlit.components.v1 as components
+from pathlib import Path
 
+# --------------------------- Page Config ---------------------------
 st.set_page_config(page_title="Suyog+ Job Finder", layout="wide")
 
-# --------------------------- 1. Helper utilities ---------------------------
+# --------------------------- Helper Functions ---------------------------
 @st.cache_data
-def load_dataframe_from_bytes(uploaded_bytes, filename):
+def load_jsonl_file(path):
+    """Load JSON or JSONL dataset from repo."""
     try:
-        # try JSON lines
-        df = pd.read_json(io.BytesIO(uploaded_bytes), lines=True)
-    except ValueError:
-        # try normal JSON
-        try:
-            data = json.loads(uploaded_bytes.decode('utf-8'))
-            df = pd.DataFrame(data)
-        except Exception as e:
-            raise e
-    # normalize string columns
+        df = pd.read_json(path, lines=True)
+    except:
+        with open(path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        df = pd.DataFrame(data)
+
+    # Normalize text columns
     for col in df.columns:
         if df[col].dtype == object:
             df[col] = df[col].map(lambda x: x.strip() if isinstance(x, str) else x)
+
     return df
 
 
@@ -54,6 +51,7 @@ def map_group(qualification):
 def filter_jobs(df, disability=None, subcategory=None, qualification=None, department=None, activities=None):
     df_filtered = df.copy()
 
+    # Disability filter
     if disability:
         d = disability.strip().lower()
         mask = pd.Series(False, index=df_filtered.index)
@@ -63,6 +61,7 @@ def filter_jobs(df, disability=None, subcategory=None, qualification=None, depar
         if mask.any():
             df_filtered = df_filtered[mask]
 
+    # Subcategory filter
     if subcategory:
         sub_lower = subcategory.strip().lower()
         mask_sub = pd.Series(False, index=df_filtered.index)
@@ -72,26 +71,28 @@ def filter_jobs(df, disability=None, subcategory=None, qualification=None, depar
         if mask_sub.any():
             df_filtered = df_filtered[mask_sub]
 
+    # Qualification → Allowed Groups
     allowed_groups = map_group(qualification) if qualification else []
     if allowed_groups and "group" in df_filtered.columns:
-        mask_group = df_filtered["group"].astype(str).str.strip().isin(allowed_groups)
-        if mask_group.any():
-            df_filtered = df_filtered[mask_group]
+        df_filtered = df_filtered[df_filtered["group"].astype(str).str.strip().isin(allowed_groups)]
 
+    # Department filter
     if department and "department" in df_filtered.columns:
         dep_lower = department.strip().lower()
-        mask_dep = df_filtered["department"].astype(str).str.lower().str.contains(dep_lower, regex=False, na=False)
-        if mask_dep.any():
-            df_filtered = df_filtered[mask_dep]
+        df_filtered = df_filtered[df_filtered["department"].astype(str).str.lower().str.contains(dep_lower, regex=False, na=False)]
 
+    # Functional Activities
     if activities and "functional_requirements" in df_filtered.columns:
-        # normalize functional requirements
         df_filtered = df_filtered.copy()
-        df_filtered["functional_norm"] = df_filtered["functional_requirements"].astype(str).str.upper().str.replace(r'[^A-Z ]', '', regex=True)
+        df_filtered["functional_norm"] = (
+            df_filtered["functional_requirements"]
+            .astype(str)
+            .str.upper()
+            .str.replace(r'[^A-Z ]', '', regex=True)
+        )
         selected_norm = [a.split()[0].upper() for a in activities]
         mask_act = df_filtered["functional_norm"].apply(lambda fr: any(a in fr for a in selected_norm))
-        if mask_act.any():
-            df_filtered = df_filtered[mask_act]
+        df_filtered = df_filtered[mask_act]
 
     return df_filtered.reset_index(drop=True)
 
@@ -108,21 +109,16 @@ def generate_pdf_tabulated(jobs_df):
     style_heading4 = ParagraphStyle('Heading4', parent=styles['Heading4'], spaceAfter=6, fontSize=12, textColor=colors.darkred)
     style_text = ParagraphStyle('Text', parent=styles['Normal'], spaceAfter=10, fontSize=11, leading=15)
 
-    title_html = '<font color="darkblue">Suyog</font><font color="maroon">+</font>'
-    elements.append(Paragraph(title_html, style_title))
+    elements.append(Paragraph('<font color="darkblue">Suyog</font><font color="maroon">+</font>', style_title))
     elements.append(Paragraph('<font color="darkblue">By DAIL NIEPMD</font>', style_title))
     elements.append(Spacer(1, 10))
     elements.append(Paragraph(f"Total Matches: {len(jobs_df)}", styles['Heading1']))
     elements.append(Spacer(1, 20))
 
     for _, job in jobs_df.iterrows():
-        designation = str(job.get('designation', '-')).capitalize()
-        group = str(job.get('group', '-')).capitalize()
-        department = str(job.get('department', '-')).capitalize()
-
-        elements.append(Paragraph(f"Designation: {designation}", style_heading2))
-        elements.append(Paragraph(f"Group: {group}", style_heading3))
-        elements.append(Paragraph(f"Department: {department}", style_heading4))
+        elements.append(Paragraph(f"Designation: {str(job.get('designation', '-')).capitalize()}", style_heading2))
+        elements.append(Paragraph(f"Group: {str(job.get('group', '-')).capitalize()}", style_heading3))
+        elements.append(Paragraph(f"Department: {str(job.get('department', '-')).capitalize()}", style_heading4))
         elements.append(Spacer(1, 10))
 
         job_data = [
@@ -133,8 +129,9 @@ def generate_pdf_tabulated(jobs_df):
             ("Working Conditions", job.get('working_conditions', '-'))
         ]
         for field, value in job_data:
-            wrapped_lines = "<br/>".join(wrap(str(value).capitalize(), 100))
-            elements.append(Paragraph(f"<b>{field}:</b> {wrapped_lines}", style_text))
+            wrapped = "<br/>".join(wrap(str(value).capitalize(), 100))
+            elements.append(Paragraph(f"<b>{field}:</b> {wrapped}", style_text))
+
         elements.append(Spacer(1, 25))
         elements.append(Paragraph("<hr/>", style_text))
 
@@ -143,30 +140,17 @@ def generate_pdf_tabulated(jobs_df):
     return buffer.getvalue()
 
 
-# --------------------------- 2. UI & App State ---------------------------
-if 'uploaded_df' not in st.session_state:
-    st.session_state['uploaded_df'] = None
+# --------------------------- Load Dataset ---------------------------
+DATA_PATH = Path("cleaned_data.jsonl")
 
-st.title("Suyog+ — Job Finder for Persons with Disabilities")
-st.markdown("Auto-loaded dataset and browser-based voice input (no server-side STT).")
-
-# Auto-load default dataset
-DEFAULT_DATA_PATH = r"C:\Users\ADMIN\Documents\SuyogJobFinder\cleaned_data.jsonl"
-try:
-    df = pd.read_json(DEFAULT_DATA_PATH, lines=True)
-    # normalize
-    for col in df.columns:
-        if df[col].dtype == object:
-            df[col] = df[col].map(lambda x: x.strip() if isinstance(x, str) else x)
-    st.session_state['uploaded_df'] = df
-    st.success(f"✅ Dataset loaded: {len(df)} job records")
-except Exception as e:
-    st.error(f"Failed to auto-load dataset: {e}")
+if not DATA_PATH.exists():
+    st.error("❌ Dataset file 'cleaned_data.jsonl' not found in the repo.")
     st.stop()
 
-# derived options
-df = st.session_state['uploaded_df']
+df = load_jsonl_file(DATA_PATH)
+st.success(f"Dataset loaded successfully — {len(df)} records")
 
+# --------------------------- Form Options ---------------------------
 disabilities = [
     "Visual Impairment", "Hearing Impairment", "Physical Disabilities",
     "Neurological Disabilities", "Blood Disorders",
@@ -186,94 +170,79 @@ qualifications = ["10th Standard", "12th Standard", "Certificate", "Diploma",
                   "Graduate", "Post Graduate", "Doctorate"]
 
 departments = df["department"].dropna().unique().tolist() if "department" in df.columns else []
-activities_list = ["S Sitting", "ST Standing", "W Walking", "BN Bending", "L Lifting", "PP Pulling & Pushing",
-                   "KC Kneeling & Crouching", "MF Manipulation with Fingers", "RW Reading & Writing",
-                   "SE Seeing", "H Hearing", "C Communication"]
 
-# Form for user inputs
-with st.form("job_search_form"):
+activities_list = [
+    "S Sitting", "ST Standing", "W Walking", "BN Bending", "L Lifting",
+    "PP Pulling & Pushing", "KC Kneeling & Crouching", "MF Manipulation with Fingers",
+    "RW Reading & Writing", "SE Seeing", "H Hearing", "C Communication"
+]
+
+# --------------------------- UI ---------------------------
+st.title("Suyog+ — Job Finder for Persons with Disabilities")
+st.markdown("Cloud-ready version with dataset auto-load and browser voice transcription.")
+
+# Search Form
+with st.form("search_form"):
     col1, col2 = st.columns(2)
     with col1:
-        disability = st.selectbox("Select your type of disability", disabilities)
+        disability = st.selectbox("Select disability", disabilities)
         subcategory = None
         if disability == "Intellectual and Developmental Disabilities":
             subcategory = st.selectbox("Select subcategory", intellectual_subcategories)
+
     with col2:
-        qualification = st.selectbox("Select highest qualification", qualifications)
+        qualification = st.selectbox("Select qualification", qualifications)
         department = st.selectbox("Select department", departments)
 
-    st.write("Select functional activities (click to add). You can also paste codes like 'S, W' into the textbox below or use the browser recorder to transcribe.")
-    # activities as toggles
-    selected_activities = st.multiselect("Functional activities", activities_list)
-    activity_text = st.text_input("Or type/paste activity codes or names (e.g., 'S Sitting, W Walking')")
+    selected_activities = st.multiselect("Functional Activities", activities_list)
+    activity_text = st.text_input("Paste codes or transcript text (optional)")
 
-    # Browser recorder component is shown below the form before submission
+    submitted = st.form_submit_button("Search Jobs")
 
-    submitted = st.form_submit_button("Search jobs")
-
-# Browser recorder (outside form so user can copy transcript into activity_text)
-html = '''
-<div style="font-family: sans-serif;">
-  <h4>Voice Input (browser transcription)</h4>
-  <p>Click <b>Start</b>, speak clearly, then click <b>Stop</b>. (Chrome/Edge supported)</p>
+# ---------------- Voice Recorder (Browser-based) ----------------
+components.html("""
+<div>
+  <h4>🎤 Voice Input (Browser-based)</h4>
   <button id="start">Start</button>
   <button id="stop">Stop</button>
-  <button id="copy">Copy transcript to clipboard</button>
-  <div style="margin-top:10px"><strong>Transcript:</strong></div>
-  <textarea id="transcript" style="width:100%;height:120px"></textarea>
-  <div style="margin-top:8px;color:gray;font-size:13px">After copying, paste the transcript into the activity text box above to include it in the search.</div>
+  <textarea id="text" style="width:100%;height:120px;margin-top:10px"></textarea>
 </div>
 <script>
-const startBtn = document.getElementById('start');
-const stopBtn = document.getElementById('stop');
-const copyBtn = document.getElementById('copy');
-const transcriptArea = document.getElementById('transcript');
-
-let recognition;
-if (!('webkitSpeechRecognition' in window) && !('SpeechRecognition' in window)) {
-  transcriptArea.value = 'Web Speech API not supported in this browser. Please use Chrome or Edge.';
-} else {
-  const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
-  recognition = new SpeechRecognition();
-  recognition.lang = 'en-US';
-  recognition.interimResults = false;
-  recognition.maxAlternatives = 1;
-
-  recognition.onresult = (event) => {
-    let text = '';
-    for (let i=0; i<event.results.length; i++) {
-      text += event.results[i][0].transcript + ' ';
-    }
-    transcriptArea.value += text.trim() + '\n';
-  };
-  recognition.onerror = (e) => { transcriptArea.value += '[Error] ' + e.error + '\n'; };
+let r = null;
+if ('webkitSpeechRecognition' in window) {
+  r = new webkitSpeechRecognition();
+  r.continuous = true;
+  r.interimResults = true;
 }
-
-startBtn.onclick = () => { if (recognition) { recognition.start(); transcriptArea.value += '[Listening...]\n'; } };
-stopBtn.onclick = () => { if (recognition) { recognition.stop(); transcriptArea.value += '[Stopped]\n'; } };
-copyBtn.onclick = () => {
-  transcriptArea.select();
-  try { document.execCommand('copy'); alert('Transcript copied — paste into the activity text box.'); }
-  catch(e) { alert('Copy failed — please manually select and copy the transcript.'); }
-};
+document.getElementById('start').onclick = () => { if(r) r.start(); };
+document.getElementById('stop').onclick = () => { if(r) r.stop(); };
+if(r){
+  r.onresult = e => {
+    let t = "";
+    for(let i=e.resultIndex;i<e.results.length;i++){
+      t += e.results[i][0].transcript + " ";
+    }
+    document.getElementById('text').value = t;
+  };
+}
 </script>
-'''
-components.html(html, height=340)
+""", height=250)
 
-# Combine activities from selections and activity_text (user may paste transcript into activity_text)
+# Merge manual + voice activities
 combined_activities = list(selected_activities)
+
 if activity_text:
-    tokens = [w.strip() for w in activity_text.replace(',', ' ').split() if w.strip()]
+    tokens = [x.strip() for x in activity_text.replace(",", " ").split()]
     for t in tokens:
         for act in activities_list:
-            if t.upper() in act.upper() or act.split()[0].upper() == t.upper():
+            if t.upper() in act.upper():
                 if act not in combined_activities:
                     combined_activities.append(act)
 
-# When user submits form, run search
+# --------------------------- Perform Search ---------------------------
 if submitted:
-    df_results = filter_jobs(
-        df=df,
+    results = filter_jobs(
+        df,
         disability=disability,
         subcategory=subcategory,
         qualification=qualification,
@@ -281,28 +250,26 @@ if submitted:
         activities=combined_activities
     )
 
-    if df_results.empty:
-        st.warning("😞 Sorry, no jobs matched your profile.")
-        # TTS: produce an audio file saying sorry
-        tts = gTTS(text="Sorry, no jobs matched your profile.", lang='en')
-        tts_buf = io.BytesIO()
-        tts.write_to_fp(tts_buf)
-        tts_buf.seek(0)
-        st.audio(tts_buf.read(), format='audio/mp3')
-    else:
-        st.success(f"✅ {len(df_results)} jobs matched your profile.")
-        # show a preview of matches
-        st.dataframe(df_results.head(50))
-        # generate pdf bytes
-        pdf_bytes = generate_pdf_tabulated(df_results)
-        st.download_button("Download PDF with matches", data=pdf_bytes, file_name="job_matches.pdf", mime='application/pdf')
-        # TTS: confirmation
-        tts = gTTS(text=f"{len(df_results)} jobs matched your profile. PDF is ready to download.", lang='en')
-        tts_buf = io.BytesIO()
-        tts.write_to_fp(tts_buf)
-        tts_buf.seek(0)
-        st.audio(tts_buf.read(), format='audio/mp3')
+    if results.empty:
+        st.warning("No job matches found.")
+        t = gTTS("Sorry, no jobs matched your profile.", lang="en")
+        buf = io.BytesIO()
+        t.write_to_fp(buf)
+        buf.seek(0)
+        st.audio(buf.read(), format="audio/mp3")
 
-# Footer
+    else:
+        st.success(f"{len(results)} jobs found!")
+        st.dataframe(results.head(50))
+
+        pdf_bytes = generate_pdf_tabulated(results)
+        st.download_button("Download PDF", data=pdf_bytes, file_name="job_matches.pdf", mime="application/pdf")
+
+        t = gTTS(f"{len(results)} jobs found. PDF ready to download.", lang="en")
+        buf = io.BytesIO()
+        t.write_to_fp(buf)
+        buf.seek(0)
+        st.audio(buf.read(), format="audio/mp3")
+
 st.markdown("---")
-st.caption("Cloud-ready version: browser transcription + auto-load dataset. Paste transcript into the activity text box to include it in filtering.")
+st.caption("Suyog+ — Cloud-Optimized Version")
