@@ -1,11 +1,6 @@
-# Suyog+ Web App (Streamlit)
-# Converted from Telegram bot to a single-file Streamlit website
-# Features implemented to match the bot behavior:
-# - Upload JSON/JSONL dataset
-# - Select disability, (if intellectual -> subcategory), qualification, department
-# - Pick functional activities (buttons + text/voice transcription)
-# - Filter jobs using same rules and generate a PDF of results
-# - Text-to-speech for announcements (gTTS)
+# Suyog+ Web App (Streamlit) — Cloud-ready
+# This version removes Python-side speech_recognition/pydub and uses
+# a browser-based Web Speech API recorder for voice input (client-side).
 
 import streamlit as st
 import pandas as pd
@@ -19,20 +14,8 @@ from reportlab.lib import colors
 from textwrap import wrap
 from reportlab.lib import colors
 from gtts import gTTS
-import speech_recognition as sr
-from pydub import AudioSegment
 
-# --------------------------- Auto-load cleaned_data.jsonl ---------------------------
-DEFAULT_DATA_PATH = r"C:\Users\ADMIN\Documents\SuyogJobFinder\cleaned_data.jsonl"
-
-def auto_load_default():
-    try:
-        return pd.read_json(DEFAULT_DATA_PATH, lines=True)
-    except Exception as e:
-        st.error(f"Auto-load failed: {e}")
-        return None
-
-# ----------------------------------------------------------------------
+import streamlit.components.v1 as components
 
 st.set_page_config(page_title="Suyog+ Job Finder", layout="wide")
 
@@ -165,12 +148,20 @@ if 'uploaded_df' not in st.session_state:
     st.session_state['uploaded_df'] = None
 
 st.title("Suyog+ — Job Finder for Persons with Disabilities")
-st.markdown("Upload your cleaned JSON/JSONL dataset and use the controls to find matches.")
+st.markdown("Auto-loaded dataset and browser-based voice input (no server-side STT).")
 
-# Auto-loaded dataset replaces upload UI
-st.session_state['uploaded_df'] = auto_load_default()
-if st.session_state['uploaded_df'] is None:
-    st.error("Default dataset could not be loaded. Please check the file path.")
+# Auto-load default dataset
+DEFAULT_DATA_PATH = r"C:\Users\ADMIN\Documents\SuyogJobFinder\cleaned_data.jsonl"
+try:
+    df = pd.read_json(DEFAULT_DATA_PATH, lines=True)
+    # normalize
+    for col in df.columns:
+        if df[col].dtype == object:
+            df[col] = df[col].map(lambda x: x.strip() if isinstance(x, str) else x)
+    st.session_state['uploaded_df'] = df
+    st.success(f"✅ Dataset loaded: {len(df)} job records")
+except Exception as e:
+    st.error(f"Failed to auto-load dataset: {e}")
     st.stop()
 
 # derived options
@@ -211,58 +202,68 @@ with st.form("job_search_form"):
         qualification = st.selectbox("Select highest qualification", qualifications)
         department = st.selectbox("Select department", departments)
 
-    st.write("Select functional activities (click to add). You can also paste codes like 'S, W' into the textbox below or upload a voice note to transcribe.")
+    st.write("Select functional activities (click to add). You can also paste codes like 'S, W' into the textbox below or use the browser recorder to transcribe.")
     # activities as toggles
     selected_activities = st.multiselect("Functional activities", activities_list)
     activity_text = st.text_input("Or type/paste activity codes or names (e.g., 'S Sitting, W Walking')")
 
-    # Audio upload for voice transcription
-    audio_file = st.file_uploader("Upload a voice note (ogg/mp3/wav) to transcribe activities (optional)", type=['ogg','mp3','wav'])
+    # Browser recorder component is shown below the form before submission
 
     submitted = st.form_submit_button("Search jobs")
 
-# process transcription if provided
-transcribed_text = ""
-if audio_file is not None:
-    try:
-        # Convert to WAV (if needed) and transcribe
-        tmp_bytes = audio_file.read()
-        ext = audio_file.name.split('.')[-1].lower()
-        wav_bytes = None
-        if ext == 'wav':
-            wav_bytes = tmp_bytes
-        else:
-            # use pydub to convert
-            audio_segment = AudioSegment.from_file(io.BytesIO(tmp_bytes), format=ext)
-            out_buf = io.BytesIO()
-            audio_segment.export(out_buf, format='wav')
-            wav_bytes = out_buf.getvalue()
+# Browser recorder (outside form so user can copy transcript into activity_text)
+html = '''
+<div style="font-family: sans-serif;">
+  <h4>Voice Input (browser transcription)</h4>
+  <p>Click <b>Start</b>, speak clearly, then click <b>Stop</b>. (Chrome/Edge supported)</p>
+  <button id="start">Start</button>
+  <button id="stop">Stop</button>
+  <button id="copy">Copy transcript to clipboard</button>
+  <div style="margin-top:10px"><strong>Transcript:</strong></div>
+  <textarea id="transcript" style="width:100%;height:120px"></textarea>
+  <div style="margin-top:8px;color:gray;font-size:13px">After copying, paste the transcript into the activity text box above to include it in the search.</div>
+</div>
+<script>
+const startBtn = document.getElementById('start');
+const stopBtn = document.getElementById('stop');
+const copyBtn = document.getElementById('copy');
+const transcriptArea = document.getElementById('transcript');
 
-        recognizer = sr.Recognizer()
-        with sr.AudioFile(io.BytesIO(wav_bytes)) as source:
-            audio_data = recognizer.record(source)
-        transcribed_text = recognizer.recognize_google(audio_data)
-        st.info(f"🗣️ Transcribed: {transcribed_text}")
-    except sr.UnknownValueError:
-        st.warning("Could not understand the audio.")
-    except Exception as e:
-        st.error(f"Transcription failed: {e}")
+let recognition;
+if (!('webkitSpeechRecognition' in window) && !('SpeechRecognition' in window)) {
+  transcriptArea.value = 'Web Speech API not supported in this browser. Please use Chrome or Edge.';
+} else {
+  const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+  recognition = new SpeechRecognition();
+  recognition.lang = 'en-US';
+  recognition.interimResults = false;
+  recognition.maxAlternatives = 1;
 
-# Combine activities from selections, text and transcription
+  recognition.onresult = (event) => {
+    let text = '';
+    for (let i=0; i<event.results.length; i++) {
+      text += event.results[i][0].transcript + ' ';
+    }
+    transcriptArea.value += text.trim() + '\n';
+  };
+  recognition.onerror = (e) => { transcriptArea.value += '[Error] ' + e.error + '\n'; };
+}
+
+startBtn.onclick = () => { if (recognition) { recognition.start(); transcriptArea.value += '[Listening...]\n'; } };
+stopBtn.onclick = () => { if (recognition) { recognition.stop(); transcriptArea.value += '[Stopped]\n'; } };
+copyBtn.onclick = () => {
+  transcriptArea.select();
+  try { document.execCommand('copy'); alert('Transcript copied — paste into the activity text box.'); }
+  catch(e) { alert('Copy failed — please manually select and copy the transcript.'); }
+};
+</script>
+'''
+components.html(html, height=340)
+
+# Combine activities from selections and activity_text (user may paste transcript into activity_text)
 combined_activities = list(selected_activities)
 if activity_text:
-    # parse codes or names
     tokens = [w.strip() for w in activity_text.replace(',', ' ').split() if w.strip()]
-    # attempt to match with activities_list
-    for t in tokens:
-        # match by code or substring
-        for act in activities_list:
-            if t.upper() in act.upper() or act.split()[0].upper() == t.upper():
-                if act not in combined_activities:
-                    combined_activities.append(act)
-
-if transcribed_text:
-    tokens = [w.strip() for w in transcribed_text.replace(',', ' ').split() if w.strip()]
     for t in tokens:
         for act in activities_list:
             if t.upper() in act.upper() or act.split()[0].upper() == t.upper():
@@ -304,4 +305,4 @@ if submitted:
 
 # Footer
 st.markdown("---")
-st.caption("Converted from Telegram bot logic — same filtering and PDF output. To run locally: `streamlit run suyog_plus_streamlit_app.py`.")
+st.caption("Cloud-ready version: browser transcription + auto-load dataset. Paste transcript into the activity text box to include it in filtering.")
