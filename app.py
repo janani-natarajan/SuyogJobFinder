@@ -68,47 +68,40 @@ def map_group(qualification):
     else:
         return ["Group D"]
 
-def filter_jobs(disability=None, subcategory=None, qualification=None, department=None, activities=None):
+def filter_jobs_permissive(disability=None, subcategory=None, qualification=None, department=None, activities=None):
     df_filtered = df.copy()
     
     # --- Disabilities ---
-    disability_cols = [col for col in df_filtered.columns if col in disabilities]
-    if disability and disability_cols:
+    if disability:
         mask = pd.Series(False, index=df_filtered.index)
-        for col in disability_cols:
-            mask |= df_filtered[col].astype(str).str.contains(disability, case=False, na=False)
+        for col in df_filtered.columns:
+            if "disabilities" in col.lower() or col.lower() == disability.lower():
+                mask |= df_filtered[col].astype(str).str.lower().str.contains(disability.lower(), na=False)
         if mask.any():
             df_filtered = df_filtered[mask]
 
     # --- Subcategory ---
-    sub_cols = [col for col in df_filtered.columns if "subcategory" in col.lower()]
-    if subcategory and sub_cols:
-        mask_sub = pd.Series(False, index=df_filtered.index)
-        for col in sub_cols:
-            mask_sub |= df_filtered[col].astype(str).str.contains(subcategory, case=False, na=False)
-        if mask_sub.any():
-            df_filtered = df_filtered[mask_sub]
+    if subcategory:
+        for col in df_filtered.columns:
+            if "subcategory" in col.lower():
+                df_filtered = df_filtered[df_filtered[col].astype(str).str.lower().str.contains(subcategory.lower(), na=False)]
 
     # --- Qualification / Group ---
     if qualification and "group" in df_filtered.columns:
         allowed_groups = map_group(qualification)
-        mask_group = df_filtered["group"].astype(str).apply(lambda x: any(g.lower() in x.lower() for g in allowed_groups))
-        if mask_group.any():
-            df_filtered = df_filtered[mask_group]
+        df_filtered = df_filtered[df_filtered["group"].astype(str).apply(
+            lambda x: any(g.lower() in x.lower() for g in allowed_groups)
+        )]
 
     # --- Department ---
     if department and "department" in df_filtered.columns:
-        mask_dep = df_filtered["department"].astype(str).str.contains(department, case=False, na=False)
-        if mask_dep.any():
-            df_filtered = df_filtered[mask_dep]
+        df_filtered = df_filtered[df_filtered["department"].astype(str).str.lower().str.contains(department.lower(), na=False)]
 
     # --- Activities ---
     if activities and "functional_requirements" in df_filtered.columns:
-        mask_act = df_filtered["functional_requirements"].astype(str).apply(
+        df_filtered = df_filtered[df_filtered["functional_requirements"].astype(str).apply(
             lambda fr: any(act.lower() in fr.lower() for act in activities)
-        )
-        if mask_act.any():
-            df_filtered = df_filtered[mask_act]
+        )]
 
     return df_filtered.reset_index(drop=True)
 
@@ -179,7 +172,7 @@ with st.form("user_form"):
     submitted = st.form_submit_button("Find Jobs")
 
     if submitted:
-        df_results = filter_jobs(
+        df_results = filter_jobs_permissive(
             disability=disability,
             subcategory=subcategory,
             qualification=qualification,
