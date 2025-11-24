@@ -15,19 +15,17 @@ from gtts import gTTS
 # --------------------------- 3. Load Dataset from GitHub ---------------------------
 DATA_URL = "https://raw.githubusercontent.com/janani-natarajan/SuyogJobFinder/main/cleaned_data.jsonl"
 
-@st.cache_data(ttl=3600)  # Cache for 1 hour
+@st.cache_data(ttl=3600)
 def load_data(url):
     df = pd.read_json(url, lines=True)
-    # Clean and normalize
     for col in df.columns:
         if df[col].dtype == object:
             df[col] = df[col].map(lambda x: x.strip() if isinstance(x, str) else x)
     return df
 
-# Initial load
 df = load_data(DATA_URL)
 
-# --------------------------- GitHub Reload Button ---------------------------
+# Reload button
 if st.button("🔄 Reload Dataset from GitHub"):
     df = load_data(DATA_URL)
     st.success("Dataset reloaded from GitHub!")
@@ -74,34 +72,35 @@ def filter_jobs(disability=None, subcategory=None, qualification=None, departmen
 
     # --- Disability filter ---
     if disability:
+        disability_cols = [col for col in df_filtered.columns if col in disabilities]
         mask = pd.Series(False, index=df_filtered.index)
-        for col in df_filtered.columns:
-            if "disabilities" in col.lower():
-                mask |= df_filtered[col].astype(str).str.contains(disability, case=False, regex=False, na=False)
+        for col in disability_cols:
+            mask |= df_filtered[col].astype(str).str.contains(disability, case=False, na=False)
         df_filtered = df_filtered[mask]
 
     # --- Subcategory filter ---
     if subcategory:
+        sub_cols = [col for col in df_filtered.columns if "subcategory" in col.lower()]
         mask_sub = pd.Series(False, index=df_filtered.index)
-        for col in df_filtered.columns:
-            if "subcategory" in col.lower():
-                mask_sub |= df_filtered[col].astype(str).str.contains(subcategory, case=False, regex=False, na=False)
+        for col in sub_cols:
+            mask_sub |= df_filtered[col].astype(str).str.contains(subcategory, case=False, na=False)
         df_filtered = df_filtered[mask_sub]
 
     # --- Qualification / Group filter ---
     if qualification and "group" in df_filtered.columns:
         allowed_groups = map_group(qualification)
-        df_filtered = df_filtered[df_filtered["group"].astype(str).str.strip().isin(allowed_groups)]
+        mask_group = df_filtered["group"].astype(str).apply(lambda x: any(g.lower() in x.lower() for g in allowed_groups))
+        df_filtered = df_filtered[mask_group]
 
     # --- Department filter ---
     if department and "department" in df_filtered.columns:
-        df_filtered = df_filtered[df_filtered["department"].astype(str).str.contains(department, case=False, regex=False)]
+        df_filtered = df_filtered[df_filtered["department"].astype(str).str.contains(department, case=False, na=False)]
 
     # --- Activities filter ---
     if activities and "functional_requirements" in df_filtered.columns:
-        df_filtered["functional_norm"] = df_filtered["functional_requirements"].astype(str).str.upper()
-        selected_norm = [a.upper() for a in activities]
-        df_filtered = df_filtered[df_filtered["functional_norm"].apply(lambda fr: any(a in fr for a in selected_norm))]
+        df_filtered = df_filtered[df_filtered["functional_requirements"].astype(str).apply(
+            lambda fr: any(act.lower() in fr.lower() for act in activities)
+        )]
 
     return df_filtered.reset_index(drop=True)
 
@@ -137,7 +136,7 @@ def generate_pdf_tabulated(jobs_df):
         job_data = [
             ("Qualification Required", job.get('qualification_required', '-')),
             ("Functional Requirements", job.get('functional_requirements', '-')),
-            ("Disabilities Supported", " ".join([str(job.get(col, '')) for col in jobs_df.columns if "disabilities" in col.lower()])),
+            ("Disabilities Supported", " ".join([str(job.get(col, '')) for col in jobs_df.columns if col in disabilities])),
             ("Nature of Work", job.get('nature_of_work', '-')),
             ("Working Conditions", job.get('working_conditions', '-'))
         ]
