@@ -1,111 +1,64 @@
-# --------------------------- Imports ---------------------------
+# --------------------------- 1. Import Libraries ---------------------------
 import streamlit as st
 import pandas as pd
-from reportlab.lib.pagesizes import A3
 from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer
 from reportlab.lib.styles import getSampleStyleSheet
-from gtts import gTTS
-from pydub import AudioSegment
-from PIL import Image
-import imageio_ffmpeg
+import pyttsx3
 import os
 
-# --------------------------- FFmpeg Setup ---------------------------
-AudioSegment.converter = imageio_ffmpeg.get_ffmpeg_exe()
+# --------------------------- 2. Load Dataset ---------------------------
+DATA_PATH = r"C:\Users\ADMIN\OneDrive\Documents\Janani\Internship\iSUyog\Dataset.xlsx"
+df = pd.read_excel(DATA_PATH)
 
-# --------------------------- Streamlit Config ---------------------------
-st.set_page_config(
-    page_title="Suyog Job Finder",
-    layout="wide",
-    initial_sidebar_state="expanded"
-)
+# --------------------------- 3. Streamlit UI ---------------------------
+st.set_page_config(page_title="Suyog Job Finder", layout="wide")
+st.title("🔎 Suyog Job Finder")
 
-# --------------------------- Load Dataset ---------------------------
-DATA_URL = "https://github.com/janani-natarajan/SuyogJobFinder/raw/main/Dataset.xlsx"
+# Input for searching jobs
+search_keyword = st.text_input("Enter a keyword (designation, department, group):").strip().lower()
 
-@st.cache_data
-def load_data(url):
-    try:
-        df = pd.read_excel(url)
-        # Ensure 'functional_requirements' column exists
-        if 'functional_requirements' not in df.columns:
-            df['functional_requirements'] = ""
-        return df
-    except Exception as e:
-        st.error(f"Failed to load dataset: {e}")
-        return pd.DataFrame()
-
-df = load_data(DATA_URL)
-
-if df.empty:
-    st.error("Dataset could not be loaded.")
+# Filter dataset based on input
+if search_keyword:
+    filtered = df[df.apply(lambda row: search_keyword in str(row['designation']).lower() \
+                                        or search_keyword in str(row['department']).lower() \
+                                        or search_keyword in str(row['group']).lower(), axis=1)]
 else:
-    st.success("✅ Dataset loaded successfully!")
-    st.dataframe(df.head())
-
-# --------------------------- Job Search Sidebar ---------------------------
-st.sidebar.header("Job Search Filters")
-
-designation_input = st.sidebar.text_input("Designation")
-department_input = st.sidebar.text_input("Department")
-qualification_input = st.sidebar.text_input("Qualification")
-functional_input = st.sidebar.text_input("Functional Requirement (comma-separated)")
-
-# --------------------------- Job Filtering Function ---------------------------
-def search_jobs(df, designation, department, qualification, functional):
     filtered = df.copy()
-    
-    if designation:
-        filtered = filtered[filtered['designation'].str.contains(designation, case=False, na=False)]
-    if department:
-        filtered = filtered[filtered['department'].str.contains(department, case=False, na=False)]
-    if qualification:
-        filtered = filtered[filtered['qualification_required'].str.contains(qualification, case=False, na=False)]
-    
-    # Functional requirement filtering
-    if functional:
-        func_terms = [x.strip().lower() for x in functional.split(",")]
-        mask = filtered['functional_requirements'].fillna("").apply(
-            lambda x: all(term in x.lower() for term in func_terms)
-        )
-        filtered = filtered[mask]
-    
-    return filtered
 
-# --------------------------- Search Jobs ---------------------------
-results = search_jobs(df, designation_input, department_input, qualification_input, functional_input)
-
-# --------------------------- Display Results ---------------------------
-st.header("Matching Jobs")
-
-if results.empty:
-    st.warning("⚠️ No job matches found. Try adjusting your filters or functional requirements.")
+# Display results
+if filtered.empty:
+    st.warning("No matching jobs found.")
 else:
-    st.success(f"✅ Found {len(results)} matching jobs!")
-    st.dataframe(results.reset_index(drop=True))
+    st.dataframe(filtered.reset_index(drop=True))
 
-# --------------------------- PDF Export ---------------------------
-st.header("Export Results to PDF")
-
-if not results.empty:
-    pdf_button = st.button("Generate PDF")
-    if pdf_button:
-        pdf_path = "job_results.pdf"
-        doc = SimpleDocTemplate(pdf_path, pagesize=A3)
+    # --------------------------- 4. PDF Generation ---------------------------
+    def generate_pdf(df_to_save):
+        pdf_file = "Jobs_Report.pdf"
+        doc = SimpleDocTemplate(pdf_file)
         styles = getSampleStyleSheet()
-        elements = []
+        story = []
 
-        elements.append(Paragraph("Matching Jobs", styles['Title']))
-        elements.append(Spacer(1, 12))
+        story.append(Paragraph("Suyog Job Finder Report", styles['Title']))
+        story.append(Spacer(1, 12))
 
-        for index, row in results.iterrows():
-            job_text = f"Designation: {row['designation']}<br/>" \
-                       f"Department: {row['department']}<br/>" \
-                       f"Qualification: {row['qualification_required']}<br/>" \
-                       f"Functional Requirements: {row['functional_requirements']}"
-            elements.append(Paragraph(job_text, styles['Normal']))
-            elements.append(Spacer(1, 12))
+        for i, row in df_to_save.iterrows():
+            text = f"<b>{row['designation']}</b> | {row['department']} | {row['group']}"
+            story.append(Paragraph(text, styles['Normal']))
+            story.append(Spacer(1, 6))
 
-        doc.build(elements)
-        st.success(f"PDF Generated: {pdf_path}")
-        st.download_button("Download PDF", data=open(pdf_path, "rb"), file_name="job_results.pdf")
+        doc.build(story)
+        return pdf_file
+
+    if st.button("📄 Download PDF Report"):
+        pdf_path = generate_pdf(filtered)
+        with open(pdf_path, "rb") as f:
+            st.download_button("Download PDF", f, file_name="Jobs_Report.pdf")
+
+    # --------------------------- 5. Text-to-Speech ---------------------------
+    if st.button("🔊 Read Jobs Aloud"):
+        engine = pyttsx3.init()
+        for i, row in filtered.iterrows():
+            text = f"{row['designation']}, Department: {row['department']}, Group: {row['group']}"
+            engine.say(text)
+        engine.runAndWait()
+        st.success("✅ Done reading jobs aloud!")
