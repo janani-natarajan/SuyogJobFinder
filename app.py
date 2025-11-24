@@ -1,13 +1,11 @@
-# --------------------------- 1. Imports ---------------------------
 import streamlit as st
 import pandas as pd
-import io
 from reportlab.lib.pagesizes import A3
 from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer
-from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
-from reportlab.lib import colors
-from textwrap import wrap
+from reportlab.lib.styles import getSampleStyleSheet
 from gtts import gTTS
+from pydub import AudioSegment
+import openpyxl
 
 # --------------------------- 2. Load Dataset from GitHub ---------------------------
 DATA_URL_XLSX = "https://raw.githubusercontent.com/janani-natarajan/SuyogJobFinder/main/Dataset.xlsx"
