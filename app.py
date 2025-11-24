@@ -11,8 +11,6 @@ from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.lib import colors
 from textwrap import wrap
 from gtts import gTTS
-from pydub import AudioSegment
-import requests
 
 # --------------------------- 3. Load Dataset from GitHub ---------------------------
 DATA_URL = "https://raw.githubusercontent.com/janani-natarajan/SuyogJobFinder/main/cleaned_data.jsonl"
@@ -67,43 +65,36 @@ def map_group(qualification):
 def filter_jobs(disability=None, subcategory=None, qualification=None, department=None, activities=None):
     df_filtered = df.copy()
 
+    # --- Disability filter ---
     if disability:
-        d = disability.strip().lower()
         mask = pd.Series(False, index=df_filtered.index)
         for col in df_filtered.columns:
             if "disabilities" in col.lower():
-                mask |= df_filtered[col].astype(str).str.lower().str.contains(d, regex=False, na=False)
-        if mask.any():
-            df_filtered = df_filtered[mask]
+                mask |= df_filtered[col].astype(str).str.contains(disability, case=False, regex=False, na=False)
+        df_filtered = df_filtered[mask]
 
+    # --- Subcategory filter ---
     if subcategory:
-        sub_lower = subcategory.strip().lower()
         mask_sub = pd.Series(False, index=df_filtered.index)
         for col in df_filtered.columns:
             if "subcategory" in col.lower():
-                mask_sub |= df_filtered[col].astype(str).str.lower().str.contains(sub_lower, regex=False, na=False)
-        if mask_sub.any():
-            df_filtered = df_filtered[mask_sub]
+                mask_sub |= df_filtered[col].astype(str).str.contains(subcategory, case=False, regex=False, na=False)
+        df_filtered = df_filtered[mask_sub]
 
-    allowed_groups = map_group(qualification) if qualification else []
-    if allowed_groups and "group" in df_filtered.columns:
-        mask_group = df_filtered["group"].astype(str).str.strip().isin(allowed_groups)
-        if mask_group.any():
-            df_filtered = df_filtered[mask_group]
+    # --- Qualification / Group filter ---
+    if qualification and "group" in df_filtered.columns:
+        allowed_groups = map_group(qualification)
+        df_filtered = df_filtered[df_filtered["group"].astype(str).str.strip().isin(allowed_groups)]
 
-    if department:
-        dep_lower = department.strip().lower()
-        if "department" in df_filtered.columns:
-            mask_dep = df_filtered["department"].astype(str).str.lower().str.contains(dep_lower, regex=False, na=False)
-            if mask_dep.any():
-                df_filtered = df_filtered[mask_dep]
+    # --- Department filter ---
+    if department and "department" in df_filtered.columns:
+        df_filtered = df_filtered[df_filtered["department"].astype(str).str.contains(department, case=False, regex=False)]
 
+    # --- Activities filter ---
     if activities and "functional_requirements" in df_filtered.columns:
-        df_filtered["functional_norm"] = df_filtered["functional_requirements"].astype(str).str.upper().str.replace(r'[^A-Z ]', '', regex=True)
-        selected_norm = [a.split()[0].upper() for a in activities]
-        mask_act = df_filtered["functional_norm"].apply(lambda fr: any(a in fr for a in selected_norm))
-        if mask_act.any():
-            df_filtered = df_filtered[mask_act]
+        df_filtered["functional_norm"] = df_filtered["functional_requirements"].astype(str).str.upper()
+        selected_norm = [a.upper() for a in activities]
+        df_filtered = df_filtered[df_filtered["functional_norm"].apply(lambda fr: any(a in fr for a in selected_norm))]
 
     return df_filtered.reset_index(drop=True)
 
@@ -181,6 +172,9 @@ with st.form("user_form"):
             department=department,
             activities=selected_activities
         )
+
+        st.write("Filtered jobs found:", len(df_results))  # debug info
+
         if df_results.empty:
             st.warning("😞 Sorry, no jobs matched your profile.")
             audio_file = send_tts("Sorry, no jobs matched your profile.")
