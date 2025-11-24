@@ -1,3 +1,4 @@
+# --------------------------- Imports ---------------------------
 import streamlit as st
 import pandas as pd
 from reportlab.lib.pagesizes import A3
@@ -5,183 +6,106 @@ from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer
 from reportlab.lib.styles import getSampleStyleSheet
 from gtts import gTTS
 from pydub import AudioSegment
-import openpyxl
+from PIL import Image
+import imageio_ffmpeg
+import os
 
-# --------------------------- 2. Load Dataset from GitHub ---------------------------
-DATA_URL_XLSX = "https://raw.githubusercontent.com/janani-natarajan/SuyogJobFinder/main/Dataset.xlsx"
+# --------------------------- FFmpeg Setup ---------------------------
+AudioSegment.converter = imageio_ffmpeg.get_ffmpeg_exe()
 
-@st.cache_data(ttl=3600)
+# --------------------------- Streamlit Config ---------------------------
+st.set_page_config(
+    page_title="Suyog Job Finder",
+    layout="wide",
+    initial_sidebar_state="expanded"
+)
+
+# --------------------------- Load Dataset ---------------------------
+DATA_URL = "https://github.com/janani-natarajan/SuyogJobFinder/raw/main/Dataset.xlsx"
+
+@st.cache_data
 def load_data(url):
-    df = pd.read_excel(url)
-    # Clean strings
-    for col in df.columns:
-        if df[col].dtype == object:
-            df[col] = df[col].map(lambda x: x.strip() if isinstance(x, str) else x)
-    return df
+    try:
+        df = pd.read_excel(url)
+        # Ensure 'functional_requirements' column exists
+        if 'functional_requirements' not in df.columns:
+            df['functional_requirements'] = ""
+        return df
+    except Exception as e:
+        st.error(f"Failed to load dataset: {e}")
+        return pd.DataFrame()
 
-df = load_data(DATA_URL_XLSX)
+df = load_data(DATA_URL)
 
-# Reload button
-if st.button("🔄 Reload Dataset from GitHub"):
-    df = load_data(DATA_URL_XLSX)
-    st.success("Dataset reloaded from GitHub!")
+if df.empty:
+    st.error("Dataset could not be loaded.")
+else:
+    st.success("✅ Dataset loaded successfully!")
+    st.dataframe(df.head())
 
-st.success(f"✅ Dataset loaded: {len(df)} job records")
+# --------------------------- Job Search Sidebar ---------------------------
+st.sidebar.header("Job Search Filters")
 
-# --------------------------- 3. Options ---------------------------
-disabilities = ["Visual Impairment", "Hearing Impairment", "Physical Disabilities",
-                "Neurological Disabilities", "Blood Disorders",
-                "Intellectual and Developmental Disabilities",
-                "Mental Illness", "Multiple Disabilities"]
+designation_input = st.sidebar.text_input("Designation")
+department_input = st.sidebar.text_input("Department")
+qualification_input = st.sidebar.text_input("Qualification")
+functional_input = st.sidebar.text_input("Functional Requirement (comma-separated)")
 
-intellectual_subcategories = [
-    "Autism Spectrum Disorder (ASD M)",
-    "Autism Spectrum Disorder (ASD MoD)",
-    "Intellectual Disability (ID)",
-    "Specific Learning Disability (SLD)",
-    "Mental Illness"
-]
-
-qualifications = ["10th Standard", "12th Standard", "Certificate", "Diploma",
-                  "Graduate", "Post Graduate", "Doctorate"]
-
-departments = df["department"].dropna().unique().tolist()
-
-activities = ["S Sitting", "ST Standing", "W Walking", "BN Bending", "L Lifting", "PP Pulling & Pushing",
-              "KC Kneeling & Crouching", "MF Manipulation with Fingers", "RW Reading & Writing",
-              "SE Seeing", "H Hearing", "C Communication"]
-
-# --------------------------- 4. Helper Functions ---------------------------
-def map_group(qualification):
-    q = qualification.strip().lower()
-    if q in ["graduate", "post graduate", "doctorate"]:
-        return ["Group A", "Group B", "Group C", "Group D"]
-    elif q == "12th standard":
-        return ["Group C", "Group D"]
-    elif q == "10th standard":
-        return ["Group D"]
-    else:
-        return ["Group D"]
-
-def filter_jobs_permissive(disability=None, subcategory=None, qualification=None, department=None, activities=None):
-    df_filtered = df.copy()
+# --------------------------- Job Filtering Function ---------------------------
+def search_jobs(df, designation, department, qualification, functional):
+    filtered = df.copy()
     
-    # --- Disabilities ---
-    if disability:
-        mask = pd.Series(False, index=df_filtered.index)
-        for col in df_filtered.columns:
-            if "disabilities" in col.lower() or col.lower() == disability.lower():
-                mask |= df_filtered[col].astype(str).str.lower().str.contains(disability.lower(), na=False)
-        if mask.any():
-            df_filtered = df_filtered[mask]
-
-    # --- Subcategory ---
-    if subcategory:
-        for col in df_filtered.columns:
-            if "subcategory" in col.lower():
-                df_filtered = df_filtered[df_filtered[col].astype(str).str.lower().str.contains(subcategory.lower(), na=False)]
-
-    # --- Qualification / Group ---
-    if qualification and "group" in df_filtered.columns:
-        allowed_groups = map_group(qualification)
-        df_filtered = df_filtered[df_filtered["group"].astype(str).apply(
-            lambda x: any(g.lower() in x.lower() for g in allowed_groups)
-        )]
-
-    # --- Department ---
-    if department and "department" in df_filtered.columns:
-        df_filtered = df_filtered[df_filtered["department"].astype(str).str.lower().str.contains(department.lower(), na=False)]
-
-    # --- Activities ---
-    if activities and "functional_requirements" in df_filtered.columns:
-        df_filtered = df_filtered[df_filtered["functional_requirements"].astype(str).apply(
-            lambda fr: any(act.lower() in fr.lower() for act in activities)
-        )]
-
-    return df_filtered.reset_index(drop=True)
-
-def generate_pdf_tabulated(jobs_df):
-    buffer = io.BytesIO()
-    doc = SimpleDocTemplate(buffer, pagesize=A3, rightMargin=50, leftMargin=50, topMargin=50, bottomMargin=50)
-    elements = []
-    styles = getSampleStyleSheet()
-
-    style_title = ParagraphStyle('Title', parent=styles['Heading1'], alignment=1, spaceAfter=5, fontSize=18)
-    style_heading2 = ParagraphStyle('Heading2', parent=styles['Heading2'], spaceAfter=10, fontSize=14, textColor=colors.darkblue)
-    style_heading3 = ParagraphStyle('Heading3', parent=styles['Heading3'], spaceAfter=8, fontSize=13, textColor=colors.darkgreen)
-    style_heading4 = ParagraphStyle('Heading4', parent=styles['Heading4'], spaceAfter=6, fontSize=12, textColor=colors.darkred)
-    style_text = ParagraphStyle('Text', parent=styles['Normal'], spaceAfter=10, fontSize=11, leading=15)
-
-    title_html = '<font color="darkblue">Suyog</font><font color="maroon">+</font>'
-    elements.append(Paragraph(title_html, style_title))
-    elements.append(Paragraph('<font color="darkblue">By DAIL NIEPMD</font>', style_title))
-    elements.append(Spacer(1, 10))
-    elements.append(Paragraph(f"Total Matches: {len(jobs_df)}", styles['Heading1']))
-    elements.append(Spacer(1, 20))
-
-    for _, job in jobs_df.iterrows():
-        designation = str(job.get('designation', '-')).capitalize()
-        group = str(job.get('group', '-')).capitalize()
-        department = str(job.get('department', '-')).capitalize()
-
-        elements.append(Paragraph(f"Designation: {designation}", style_heading2))
-        elements.append(Paragraph(f"Group: {group}", style_heading3))
-        elements.append(Paragraph(f"Department: {department}", style_heading4))
-        elements.append(Spacer(1, 10))
-
-        job_data = [
-            ("Qualification Required", job.get('qualification_required', '-')),
-            ("Functional Requirements", job.get('functional_requirements', '-')),
-            ("Disabilities Supported", " ".join([str(job.get(col, '')) for col in df.columns if col in disabilities])),
-            ("Nature of Work", job.get('nature_of_work', '-')),
-            ("Working Conditions", job.get('working_conditions', '-'))
-        ]
-        for field, value in job_data:
-            wrapped_lines = "<br/>".join(wrap(str(value).capitalize(), 100))
-            elements.append(Paragraph(f"<b>{field}:</b> {wrapped_lines}", style_text))
-        elements.append(Spacer(1, 25))
-        elements.append(Paragraph("<hr/>", style_text))
-
-    doc.build(elements)
-    buffer.seek(0)
-    return buffer
-
-def send_tts(text):
-    tts = gTTS(text=text, lang='en')
-    audio_buffer = io.BytesIO()
-    tts.write_to_fp(audio_buffer)
-    audio_buffer.seek(0)
-    return audio_buffer
-
-# --------------------------- 5. Streamlit Form ---------------------------
-st.header("Find Jobs for Persons with Disabilities")
-
-with st.form("user_form"):
-    disability = st.selectbox("Select your type of disability:", disabilities)
-    subcategory = None
-    if disability == "Intellectual and Developmental Disabilities":
-        subcategory = st.selectbox("Select the subcategory:", intellectual_subcategories)
-    qualification = st.selectbox("Select highest qualification:", qualifications)
-    department = st.selectbox("Select department:", departments)
-    selected_activities = st.multiselect("Select functional activities:", activities)
-    submitted = st.form_submit_button("Find Jobs")
-
-    if submitted:
-        df_results = filter_jobs_permissive(
-            disability=disability,
-            subcategory=subcategory,
-            qualification=qualification,
-            department=department,
-            activities=selected_activities
+    if designation:
+        filtered = filtered[filtered['designation'].str.contains(designation, case=False, na=False)]
+    if department:
+        filtered = filtered[filtered['department'].str.contains(department, case=False, na=False)]
+    if qualification:
+        filtered = filtered[filtered['qualification_required'].str.contains(qualification, case=False, na=False)]
+    
+    # Functional requirement filtering
+    if functional:
+        func_terms = [x.strip().lower() for x in functional.split(",")]
+        mask = filtered['functional_requirements'].fillna("").apply(
+            lambda x: all(term in x.lower() for term in func_terms)
         )
+        filtered = filtered[mask]
+    
+    return filtered
 
-        if df_results.empty:
-            st.warning("😞 Sorry, no jobs matched your profile.")
-            audio_file = send_tts("Sorry, no jobs matched your profile.")
-            st.audio(audio_file, format="audio/mp3")
-        else:
-            pdf_buffer = generate_pdf_tabulated(df_results)
-            st.success(f"✅ {len(df_results)} jobs matched your profile!")
-            st.download_button("📄 Download Job Matches PDF", pdf_buffer, file_name="job_matches.pdf", mime="application/pdf")
-            audio_file = send_tts(f"{len(df_results)} jobs matched your profile. PDF is ready for download.")
-            st.audio(audio_file, format="audio/mp3")
+# --------------------------- Search Jobs ---------------------------
+results = search_jobs(df, designation_input, department_input, qualification_input, functional_input)
+
+# --------------------------- Display Results ---------------------------
+st.header("Matching Jobs")
+
+if results.empty:
+    st.warning("⚠️ No job matches found. Try adjusting your filters or functional requirements.")
+else:
+    st.success(f"✅ Found {len(results)} matching jobs!")
+    st.dataframe(results.reset_index(drop=True))
+
+# --------------------------- PDF Export ---------------------------
+st.header("Export Results to PDF")
+
+if not results.empty:
+    pdf_button = st.button("Generate PDF")
+    if pdf_button:
+        pdf_path = "job_results.pdf"
+        doc = SimpleDocTemplate(pdf_path, pagesize=A3)
+        styles = getSampleStyleSheet()
+        elements = []
+
+        elements.append(Paragraph("Matching Jobs", styles['Title']))
+        elements.append(Spacer(1, 12))
+
+        for index, row in results.iterrows():
+            job_text = f"Designation: {row['designation']}<br/>" \
+                       f"Department: {row['department']}<br/>" \
+                       f"Qualification: {row['qualification_required']}<br/>" \
+                       f"Functional Requirements: {row['functional_requirements']}"
+            elements.append(Paragraph(job_text, styles['Normal']))
+            elements.append(Spacer(1, 12))
+
+        doc.build(elements)
+        st.success(f"PDF Generated: {pdf_path}")
+        st.download_button("Download PDF", data=open(pdf_path, "rb"), file_name="job_results.pdf")
