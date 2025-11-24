@@ -14,11 +14,13 @@ from gtts import gTTS
 import streamlit.components.v1 as components
 from pathlib import Path
 
+# --------------------------- Page Config ---------------------------
 st.set_page_config(page_title="Suyog+ Job Finder", layout="wide")
 
 # --------------------------- Helper Functions ---------------------------
 @st.cache_data
 def load_jsonl_file(path):
+    """Load JSON/JSONL dataset and normalize string columns."""
     try:
         df = pd.read_json(path, lines=True)
     except:
@@ -48,7 +50,7 @@ def filter_jobs(df, disability=None, subcategory=None, qualification=None, depar
     department = department.lower().strip() if department else None
     activities = [a.upper().strip() for a in activities] if activities else []
 
-    # Disability
+    # Disability filter
     if disability:
         mask = pd.Series(False, index=df_filtered.index)
         for col in df_filtered.columns:
@@ -57,7 +59,7 @@ def filter_jobs(df, disability=None, subcategory=None, qualification=None, depar
         if mask.any():
             df_filtered = df_filtered[mask]
 
-    # Subcategory
+    # Subcategory filter
     if subcategory:
         mask_sub = pd.Series(False, index=df_filtered.index)
         for col in df_filtered.columns:
@@ -71,7 +73,7 @@ def filter_jobs(df, disability=None, subcategory=None, qualification=None, depar
     if allowed_groups and "group" in df_filtered.columns:
         df_filtered = df_filtered[df_filtered["group"].astype(str).str.lower().isin(allowed_groups)]
 
-    # Department
+    # Department filter
     if department and "department" in df_filtered.columns:
         df_filtered = df_filtered[df_filtered["department"].astype(str).str.lower().str.contains(department, regex=False, na=False)]
 
@@ -220,10 +222,10 @@ if activity_text:
 if submitted:
     results = filter_jobs(
         df,
-        disability=disability.lower().strip(),
+        disability=disability,
         subcategory=subcategory.lower().strip() if subcategory else None,
         qualification=qualification,
-        department=department.lower().strip(),
+        department=department,
         activities=[a.lower() for a in combined_activities]
     )
     st.write(f"Filtered results: {len(results)}")
