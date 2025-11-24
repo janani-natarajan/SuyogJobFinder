@@ -1,5 +1,5 @@
 # --------------------------- 1. Install packages ---------------------------
-!pip install streamlit pandas reportlab gtts pydub
+!pip install streamlit pandas reportlab gtts pydub openpyxl
 
 # --------------------------- 2. Imports ---------------------------
 import streamlit as st
@@ -13,21 +13,22 @@ from textwrap import wrap
 from gtts import gTTS
 
 # --------------------------- 3. Load Dataset from GitHub ---------------------------
-DATA_URL = "https://raw.githubusercontent.com/janani-natarajan/SuyogJobFinder/main/cleaned_data.jsonl"
+DATA_URL_XLSX = "https://raw.githubusercontent.com/janani-natarajan/SuyogJobFinder/main/Dataset.xlsx"
 
 @st.cache_data(ttl=3600)
 def load_data(url):
-    df = pd.read_json(url, lines=True)
+    df = pd.read_excel(url)
+    # Clean strings
     for col in df.columns:
         if df[col].dtype == object:
             df[col] = df[col].map(lambda x: x.strip() if isinstance(x, str) else x)
     return df
 
-df = load_data(DATA_URL)
+df = load_data(DATA_URL_XLSX)
 
 # Reload button
 if st.button("🔄 Reload Dataset from GitHub"):
-    df = load_data(DATA_URL)
+    df = load_data(DATA_URL_XLSX)
     st.success("Dataset reloaded from GitHub!")
 
 st.success(f"✅ Dataset loaded: {len(df)} job records")
@@ -69,38 +70,45 @@ def map_group(qualification):
 
 def filter_jobs(disability=None, subcategory=None, qualification=None, department=None, activities=None):
     df_filtered = df.copy()
-
-    # --- Disability filter ---
-    if disability:
-        disability_cols = [col for col in df_filtered.columns if col in disabilities]
+    
+    # --- Disabilities ---
+    disability_cols = [col for col in df_filtered.columns if col in disabilities]
+    if disability and disability_cols:
         mask = pd.Series(False, index=df_filtered.index)
         for col in disability_cols:
             mask |= df_filtered[col].astype(str).str.contains(disability, case=False, na=False)
-        df_filtered = df_filtered[mask]
+        if mask.any():
+            df_filtered = df_filtered[mask]
 
-    # --- Subcategory filter ---
-    if subcategory:
-        sub_cols = [col for col in df_filtered.columns if "subcategory" in col.lower()]
+    # --- Subcategory ---
+    sub_cols = [col for col in df_filtered.columns if "subcategory" in col.lower()]
+    if subcategory and sub_cols:
         mask_sub = pd.Series(False, index=df_filtered.index)
         for col in sub_cols:
             mask_sub |= df_filtered[col].astype(str).str.contains(subcategory, case=False, na=False)
-        df_filtered = df_filtered[mask_sub]
+        if mask_sub.any():
+            df_filtered = df_filtered[mask_sub]
 
-    # --- Qualification / Group filter ---
+    # --- Qualification / Group ---
     if qualification and "group" in df_filtered.columns:
         allowed_groups = map_group(qualification)
         mask_group = df_filtered["group"].astype(str).apply(lambda x: any(g.lower() in x.lower() for g in allowed_groups))
-        df_filtered = df_filtered[mask_group]
+        if mask_group.any():
+            df_filtered = df_filtered[mask_group]
 
-    # --- Department filter ---
+    # --- Department ---
     if department and "department" in df_filtered.columns:
-        df_filtered = df_filtered[df_filtered["department"].astype(str).str.contains(department, case=False, na=False)]
+        mask_dep = df_filtered["department"].astype(str).str.contains(department, case=False, na=False)
+        if mask_dep.any():
+            df_filtered = df_filtered[mask_dep]
 
-    # --- Activities filter ---
+    # --- Activities ---
     if activities and "functional_requirements" in df_filtered.columns:
-        df_filtered = df_filtered[df_filtered["functional_requirements"].astype(str).apply(
+        mask_act = df_filtered["functional_requirements"].astype(str).apply(
             lambda fr: any(act.lower() in fr.lower() for act in activities)
-        )]
+        )
+        if mask_act.any():
+            df_filtered = df_filtered[mask_act]
 
     return df_filtered.reset_index(drop=True)
 
@@ -136,7 +144,7 @@ def generate_pdf_tabulated(jobs_df):
         job_data = [
             ("Qualification Required", job.get('qualification_required', '-')),
             ("Functional Requirements", job.get('functional_requirements', '-')),
-            ("Disabilities Supported", " ".join([str(job.get(col, '')) for col in jobs_df.columns if col in disabilities])),
+            ("Disabilities Supported", " ".join([str(job.get(col, '')) for col in df.columns if col in disabilities])),
             ("Nature of Work", job.get('nature_of_work', '-')),
             ("Working Conditions", job.get('working_conditions', '-'))
         ]
@@ -178,8 +186,6 @@ with st.form("user_form"):
             department=department,
             activities=selected_activities
         )
-
-        st.write("Filtered jobs found:", len(df_results))  # Debug info
 
         if df_results.empty:
             st.warning("😞 Sorry, no jobs matched your profile.")
