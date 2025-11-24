@@ -15,7 +15,7 @@ from gtts import gTTS
 # --------------------------- 3. Load Dataset from GitHub ---------------------------
 DATA_URL = "https://raw.githubusercontent.com/janani-natarajan/SuyogJobFinder/main/cleaned_data.jsonl"
 
-@st.cache_data
+@st.cache_data(ttl=3600)  # Cache for 1 hour
 def load_data(url):
     df = pd.read_json(url, lines=True)
     # Clean and normalize
@@ -24,7 +24,14 @@ def load_data(url):
             df[col] = df[col].map(lambda x: x.strip() if isinstance(x, str) else x)
     return df
 
+# Initial load
 df = load_data(DATA_URL)
+
+# --------------------------- GitHub Reload Button ---------------------------
+if st.button("🔄 Reload Dataset from GitHub"):
+    df = load_data(DATA_URL)
+    st.success("Dataset reloaded from GitHub!")
+
 st.success(f"✅ Dataset loaded: {len(df)} job records")
 
 # --------------------------- 4. Options ---------------------------
@@ -173,7 +180,7 @@ with st.form("user_form"):
             activities=selected_activities
         )
 
-        st.write("Filtered jobs found:", len(df_results))  # debug info
+        st.write("Filtered jobs found:", len(df_results))  # Debug info
 
         if df_results.empty:
             st.warning("😞 Sorry, no jobs matched your profile.")
