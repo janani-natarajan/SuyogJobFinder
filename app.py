@@ -1,7 +1,4 @@
-# --------------------------- 1. Install packages ---------------------------
-!pip install streamlit pandas reportlab gtts pydub openpyxl
-
-# --------------------------- 2. Imports ---------------------------
+# --------------------------- 1. Imports ---------------------------
 import streamlit as st
 import pandas as pd
 import io
@@ -12,7 +9,7 @@ from reportlab.lib import colors
 from textwrap import wrap
 from gtts import gTTS
 
-# --------------------------- 3. Load Dataset from GitHub ---------------------------
+# --------------------------- 2. Load Dataset from GitHub ---------------------------
 DATA_URL_XLSX = "https://raw.githubusercontent.com/janani-natarajan/SuyogJobFinder/main/Dataset.xlsx"
 
 @st.cache_data(ttl=3600)
@@ -33,7 +30,7 @@ if st.button("🔄 Reload Dataset from GitHub"):
 
 st.success(f"✅ Dataset loaded: {len(df)} job records")
 
-# --------------------------- 4. Options ---------------------------
+# --------------------------- 3. Options ---------------------------
 disabilities = ["Visual Impairment", "Hearing Impairment", "Physical Disabilities",
                 "Neurological Disabilities", "Blood Disorders",
                 "Intellectual and Developmental Disabilities",
@@ -56,7 +53,7 @@ activities = ["S Sitting", "ST Standing", "W Walking", "BN Bending", "L Lifting"
               "KC Kneeling & Crouching", "MF Manipulation with Fingers", "RW Reading & Writing",
               "SE Seeing", "H Hearing", "C Communication"]
 
-# --------------------------- 5. Helper Functions ---------------------------
+# --------------------------- 4. Helper Functions ---------------------------
 def map_group(qualification):
     q = qualification.strip().lower()
     if q in ["graduate", "post graduate", "doctorate"]:
@@ -158,7 +155,7 @@ def send_tts(text):
     audio_buffer.seek(0)
     return audio_buffer
 
-# --------------------------- 6. Streamlit Form ---------------------------
+# --------------------------- 5. Streamlit Form ---------------------------
 st.header("Find Jobs for Persons with Disabilities")
 
 with st.form("user_form"):
