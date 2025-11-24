@@ -1,5 +1,5 @@
-# Suyog+ Web App (Streamlit) — Debug & Fixed Filtering
-# Fully normalized dataset & robust filtering with debug outputs
+# Suyog+ Web App (Streamlit) — Cloud-ready
+# Fully normalized dataset & robust filtering
 
 import streamlit as st
 import pandas as pd
@@ -14,7 +14,20 @@ from gtts import gTTS
 import streamlit.components.v1 as components
 from pathlib import Path
 
+# --------------------------- Page Config ---------------------------
 st.set_page_config(page_title="Suyog+ Job Finder", layout="wide")
+
+# --------------------------- Header ---------------------------
+st.markdown(
+    """
+    <div style="text-align:center">
+        <h2>Developed by Janani N</h2>
+        <h4>Agate Infotek</h4>
+    </div>
+    """,
+    unsafe_allow_html=True
+)
+st.markdown("---")  # horizontal line
 
 # --------------------------- Helper Functions ---------------------------
 @st.cache_data
@@ -25,68 +38,62 @@ def load_jsonl_file(path):
         with open(path, "r", encoding="utf-8") as f:
             data = json.load(f)
         df = pd.DataFrame(data)
-    # Normalize string columns
     for col in df.columns:
         if df[col].dtype == object:
-            df[col] = df[col].astype(str).str.strip()
+            df[col] = df[col].astype(str).str.strip().str.lower()
     return df
 
-# Map qualification to allowed groups
 def map_group(qualification):
     q = str(qualification).lower().strip()
     if q in ["graduate", "post graduate", "doctorate"]:
-        return ["A", "B", "C", "D"]
+        return ["group a", "group b", "group c", "group d"]
     elif q == "12th standard":
-        return ["C", "D"]
+        return ["group c", "group d"]
     elif q == "10th standard":
-        return ["D"]
+        return ["group d"]
     else:
-        return ["D"]
+        return ["group d"]
 
 def filter_jobs(df, disability=None, subcategory=None, qualification=None, department=None, activities=None):
     df_filtered = df.copy()
+    disability = disability.lower().strip() if disability else None
+    subcategory = subcategory.lower().strip() if subcategory else None
+    department = department.lower().strip() if department else None
+    activities = [a.upper().strip() for a in activities] if activities else []
 
-    # Normalize inputs
-    disability = disability.strip().lower() if disability else None
-    subcategory = subcategory.strip().lower() if subcategory else None
-    department = department.strip().lower() if department else None
-    activities = [a.strip().lower() for a in activities] if activities else []
-
-    # ------------------- Disability Filter -------------------
+    # Disability
     if disability:
         mask = pd.Series(False, index=df_filtered.index)
         for col in df_filtered.columns:
             if "disabilities" in col.lower():
-                mask |= df_filtered[col].astype(str).str.lower().str.contains(disability, regex=False, na=False)
-        df_filtered = df_filtered[mask]
-        st.write("After disability filter:", len(df_filtered))
+                mask |= df_filtered[col].astype(str).str.contains(disability, regex=False, na=False)
+        if mask.any():
+            df_filtered = df_filtered[mask]
 
-    # ------------------- Subcategory Filter -------------------
+    # Subcategory
     if subcategory:
         mask_sub = pd.Series(False, index=df_filtered.index)
         for col in df_filtered.columns:
             if "subcategory" in col.lower():
-                mask_sub |= df_filtered[col].astype(str).str.lower().str.contains(subcategory, regex=False, na=False)
-        df_filtered = df_filtered[mask_sub]
-        st.write("After subcategory filter:", len(df_filtered))
+                mask_sub |= df_filtered[col].astype(str).str.contains(subcategory, regex=False, na=False)
+        if mask_sub.any():
+            df_filtered = df_filtered[mask_sub]
 
-    # ------------------- Qualification → Group -------------------
+    # Qualification → Group
     allowed_groups = map_group(qualification) if qualification else []
     if allowed_groups and "group" in df_filtered.columns:
-        df_filtered = df_filtered[df_filtered["group"].astype(str).str.upper().isin(allowed_groups)]
-        st.write("After group filter:", len(df_filtered))
+        df_filtered = df_filtered[df_filtered["group"].astype(str).str.lower().isin(allowed_groups)]
 
-    # ------------------- Department Filter -------------------
+    # Department
     if department and "department" in df_filtered.columns:
         df_filtered = df_filtered[df_filtered["department"].astype(str).str.lower().str.contains(department, regex=False, na=False)]
-        st.write("After department filter:", len(df_filtered))
 
-    # ------------------- Functional Activities -------------------
+    # Functional Activities
     if activities and "functional_requirements" in df_filtered.columns:
-        df_filtered['functional_requirements_lower'] = df_filtered['functional_requirements'].astype(str).str.lower()
-        mask_act = df_filtered['functional_requirements_lower'].apply(lambda fr: any(act in fr for act in activities))
+        df_filtered = df_filtered.copy()
+        df_filtered["functional_norm"] = df_filtered["functional_requirements"].astype(str).str.upper().str.replace(r'[^A-Z ]', '', regex=True)
+        mask_act = df_filtered["functional_norm"].apply(lambda fr: any(act in fr for act in activities))
         df_filtered = df_filtered[mask_act]
-        st.write("After activities filter:", len(df_filtered))
 
     return df_filtered.reset_index(drop=True)
 
@@ -95,7 +102,6 @@ def generate_pdf_tabulated(jobs_df):
     doc = SimpleDocTemplate(buffer, pagesize=A3, rightMargin=50, leftMargin=50, topMargin=50, bottomMargin=50)
     elements = []
     styles = getSampleStyleSheet()
-
     style_title = ParagraphStyle('Title', parent=styles['Heading1'], alignment=1, spaceAfter=5, fontSize=18)
     style_heading2 = ParagraphStyle('Heading2', parent=styles['Heading2'], spaceAfter=10, fontSize=14, textColor=colors.darkblue)
     style_heading3 = ParagraphStyle('Heading3', parent=styles['Heading3'], spaceAfter=8, fontSize=13, textColor=colors.darkgreen)
@@ -109,9 +115,9 @@ def generate_pdf_tabulated(jobs_df):
     elements.append(Spacer(1, 20))
 
     for _, job in jobs_df.iterrows():
-        elements.append(Paragraph(f"Designation: {str(job.get('designation', '-'))}", style_heading2))
-        elements.append(Paragraph(f"Group: {str(job.get('group', '-'))}", style_heading3))
-        elements.append(Paragraph(f"Department: {str(job.get('department', '-'))}", style_heading4))
+        elements.append(Paragraph(f"Designation: {str(job.get('designation', '-')).capitalize()}", style_heading2))
+        elements.append(Paragraph(f"Group: {str(job.get('group', '-')).capitalize()}", style_heading3))
+        elements.append(Paragraph(f"Department: {str(job.get('department', '-')).capitalize()}", style_heading4))
         elements.append(Spacer(1, 10))
 
         job_data = [
@@ -122,7 +128,7 @@ def generate_pdf_tabulated(jobs_df):
             ("Working Conditions", job.get('working_conditions', '-'))
         ]
         for field, value in job_data:
-            wrapped = "<br/>".join(wrap(str(value), 100))
+            wrapped = "<br/>".join(wrap(str(value).capitalize(), 100))
             elements.append(Paragraph(f"<b>{field}:</b> {wrapped}", style_text))
 
         elements.append(Spacer(1, 25))
@@ -137,11 +143,10 @@ DATA_PATH = Path("cleaned_data.jsonl")
 if not DATA_PATH.exists():
     st.error("❌ Dataset file 'cleaned_data.jsonl' not found in the repo.")
     st.stop()
-
 df = load_jsonl_file(DATA_PATH)
 st.success(f"✅ Dataset loaded successfully — {len(df)} records")
 
-# --------------------------- UI Options ---------------------------
+# --------------------------- UI Form Options ---------------------------
 disabilities = [
     "Visual Impairment", "Hearing Impairment", "Physical Disabilities",
     "Neurological Disabilities", "Blood Disorders",
@@ -170,7 +175,7 @@ activities_list = [
 
 # --------------------------- Search Form ---------------------------
 st.title("Suyog+ — Job Finder for Persons with Disabilities")
-st.markdown("Cloud-ready version with dataset auto-load and debug outputs.")
+st.markdown("Cloud-ready version with dataset auto-load and browser voice transcription.")
 
 with st.form("search_form"):
     col1, col2 = st.columns(2)
@@ -186,6 +191,35 @@ with st.form("search_form"):
     activity_text = st.text_input("Paste codes or transcript text (optional)")
     submitted = st.form_submit_button("Search Jobs")
 
+# --------------------------- Browser Voice Input ---------------------------
+components.html("""
+<div>
+  <h4>🎤 Voice Input (Browser-based)</h4>
+  <button id="start">Start</button>
+  <button id="stop">Stop</button>
+  <textarea id="text" style="width:100%;height:120px;margin-top:10px"></textarea>
+</div>
+<script>
+let r = null;
+if ('webkitSpeechRecognition' in window) {
+  r = new webkitSpeechRecognition();
+  r.continuous = true;
+  r.interimResults = true;
+}
+document.getElementById('start').onclick = () => { if(r) r.start(); };
+document.getElementById('stop').onclick = () => { if(r) r.stop(); };
+if(r){
+  r.onresult = e => {
+    let t = "";
+    for(let i=e.resultIndex;i<e.results.length;i++){
+      t += e.results[i][0].transcript + " ";
+    }
+    document.getElementById('text').value = t;
+  };
+}
+</script>
+""", height=250)
+
 # --------------------------- Combine Activities ---------------------------
 combined_activities = list(selected_activities)
 if activity_text:
@@ -199,13 +233,12 @@ if activity_text:
 if submitted:
     results = filter_jobs(
         df,
-        disability=disability,
-        subcategory=subcategory,
+        disability=disability.lower().strip(),
+        subcategory=subcategory.lower().strip() if subcategory else None,
         qualification=qualification,
-        department=department,
-        activities=combined_activities
+        department=department.lower().strip(),
+        activities=[a.lower() for a in combined_activities]
     )
-
     st.write(f"Filtered results: {len(results)}")
     if results.empty:
         st.warning("😞 No job matches found.")
@@ -226,4 +259,4 @@ if submitted:
         st.audio(buf.read(), format="audio/mp3")
 
 st.markdown("---")
-st.caption("Suyog+ — Debug & Cloud-Optimized Version")
+st.caption("Suyog+ — Cloud-Optimized Version")
