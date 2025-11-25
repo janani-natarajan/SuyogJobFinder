@@ -1,6 +1,5 @@
 # --------------------------- 1. Install Packages ---------------------------
-# Uncomment if running locally
-# !pip install pandas reportlab gtts streamlit SpeechRecognition pydub streamlit-webrtc pyaudio
+# pip install pandas reportlab gtts pydub openai-whisper streamlit streamlit-webrtc
 
 # --------------------------- 2. Imports ---------------------------
 import streamlit as st
@@ -14,8 +13,9 @@ from reportlab.lib import colors
 from textwrap import wrap
 from gtts import gTTS
 import base64
-import speech_recognition as sr
-from streamlit_webrtc import webrtc_streamer, AudioProcessorBase, RTCConfiguration
+from pydub import AudioSegment
+import whisper
+from streamlit_webrtc import webrtc_streamer, AudioProcessorBase, WebRtcMode
 
 # --------------------------- 3. Fetch Dataset from GitHub ---------------------------
 GITHUB_RAW_URL = "https://raw.githubusercontent.com/janani-natarajan/SuyogJobFinder/main/cleaned_data.jsonl"
@@ -116,7 +116,6 @@ def generate_pdf_tabulated(jobs_df):
     elements = []
     styles = getSampleStyleSheet()
     style_title = ParagraphStyle('Title', parent=styles['Heading1'], alignment=1, spaceAfter=5, fontSize=18)
-    style_subtitle = ParagraphStyle('Subtitle', parent=styles['Normal'], alignment=1, fontSize=12, spaceAfter=20)
     style_heading2 = ParagraphStyle('Heading2', parent=styles['Heading2'], spaceAfter=10, fontSize=14, textColor=colors.darkblue)
     style_heading3 = ParagraphStyle('Heading3', parent=styles['Heading3'], spaceAfter=8, fontSize=13, textColor=colors.darkgreen)
     style_heading4 = ParagraphStyle('Heading4', parent=styles['Heading4'], spaceAfter=6, fontSize=12, textColor=colors.darkred)
@@ -159,8 +158,26 @@ def tts_download_link(text, filename="tts.mp3"):
     b64 = base64.b64encode(buffer.read()).decode()
     return f'<a href="data:audio/mp3;base64,{b64}" download="{filename}">Download TTS</a>'
 
-# --------------------------- 6. Streamlit App ---------------------------
-st.title("👋 Suyog+ Job Finder for Persons with Disabilities")
+# --------------------------- 6. Streamlit WebRTC Processor ---------------------------
+class WhisperProcessor(AudioProcessorBase):
+    def __init__(self):
+        self.model = whisper.load_model("tiny")
+        self.transcribed_text = ""
+
+    def recv(self, frame):
+        audio = frame.to_ndarray().T
+        AudioSegment(
+            audio.tobytes(), 
+            frame_rate=frame.rate, 
+            sample_width=audio.dtype.itemsize, 
+            channels=audio.shape[0]
+        ).export("temp_stream.wav", format="wav")
+        result = self.model.transcribe("temp_stream.wav")
+        self.transcribed_text = result["text"]
+        return frame
+
+# --------------------------- 7. Streamlit App ---------------------------
+st.title("👋 Suyog+ Job Finder (Real-time Voice Input)")
 
 with st.form("job_filter"):
     disability = st.selectbox("Select Disability Type", disabilities)
@@ -169,43 +186,37 @@ with st.form("job_filter"):
         subcategory = st.selectbox("Select Subcategory", intellectual_subcategories)
     qualification = st.selectbox("Select Highest Qualification", qualifications)
     department = st.selectbox("Select Department", departments)
-    activities_selected = st.multiselect("Select Functional Activities (or use voice input below)", activities)
+
+    st.markdown("### 🎤 Speak your functional activities below:")
+    webrtc_ctx = webrtc_streamer(
+        key="whisper",
+        mode=WebRtcMode.RECVONLY,
+        audio_processor_factory=WhisperProcessor,
+        media_stream_constraints={"audio": True, "video": False},
+        async_processing=True
+    )
+
+    manual_activities = st.multiselect("Or select functional activities manually:", options=activities)
     
     submitted = st.form_submit_button("Find Jobs")
 
-# --------------------------- 7. Voice Recognition ---------------------------
-st.subheader("🎤 Speak Functional Activities")
-st.write("Click below, speak your activities (e.g., 'S Sitting, W Walking'), then stop.")
-
-if "voice_text" not in st.session_state:
-    st.session_state.voice_text = ""
-
-rtc_config = RTCConfiguration({"iceServers": [{"urls": ["stun:stun.l.google.com:19302"]}]})
-
-webrtc_ctx = webrtc_streamer(key="speech", mode="RTCOnly", rtc_configuration=rtc_config)
-
-if webrtc_ctx.state.playing:
-    st.info("Listening... Speak now!")
-    if webrtc_ctx.audio_receiver:
-        audio_frames = webrtc_ctx.audio_receiver.get_frames(timeout=1)
-        if audio_frames:
-            recognizer = sr.Recognizer()
-            try:
-                audio_data = sr.AudioData(b''.join([f.to_bytes() for f in audio_frames]), 16000, 2)
-                text = recognizer.recognize_google(audio_data)
-                st.session_state.voice_text = text
-            except:
-                pass
-
-if st.session_state.voice_text:
-    st.write(f"🗣️ Recognized Activities: {st.session_state.voice_text}")
-    if st.button("Use Recognized Activities"):
-        activities_selected += [a.strip() for a in st.session_state.voice_text.split(",")]
-
 # --------------------------- 8. Run Filter ---------------------------
 if submitted:
-    st.info("🔍 Searching jobs...")
+    activities_selected = []
+    if webrtc_ctx and webrtc_ctx.audio_processor:
+        activities_text = webrtc_ctx.audio_processor.transcribed_text
+        st.write(f"🗣️ Recognized: {activities_text}")
+        spoken_acts = [w.strip().upper() for w in activities_text.replace(',', ' ').split()]
+        activities_selected = [a for a in activities if any(code in a.upper() or desc in a.upper() for code in spoken_acts for desc in spoken_acts)]
+
+    if not activities_selected:
+        activities_selected = manual_activities
+        if not activities_selected:
+            st.warning("❌ No activities detected. Please speak or select manually.")
+            st.stop()
+
     df_results = filter_jobs(disability, subcategory, qualification, department, activities_selected)
+
     if df_results.empty:
         st.warning("😞 Sorry, no jobs matched your profile.")
     else:
