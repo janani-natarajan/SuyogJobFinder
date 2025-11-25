@@ -1,5 +1,6 @@
-# --------------------------- 1. Install packages ---------------------------
-# !pip install pandas reportlab gtts requests streamlit
+# --------------------------- 1. Install Packages ---------------------------
+# Uncomment if running locally
+# !pip install pandas reportlab gtts streamlit SpeechRecognition pydub streamlit-webrtc pyaudio
 
 # --------------------------- 2. Imports ---------------------------
 import streamlit as st
@@ -11,30 +12,31 @@ from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.lib import colors
 from textwrap import wrap
+from gtts import gTTS
+import base64
+import speech_recognition as sr
+from streamlit_webrtc import webrtc_streamer, AudioProcessorBase, RTCConfiguration
 
-# --------------------------- 3. Load Dataset from GitHub ---------------------------
+# --------------------------- 3. Fetch Dataset from GitHub ---------------------------
 GITHUB_RAW_URL = "https://raw.githubusercontent.com/janani-natarajan/SuyogJobFinder/main/cleaned_data.jsonl"
 
-@st.cache_data(show_spinner=True)
+@st.cache_data
 def load_dataset(url):
     try:
-        r = requests.get(url, timeout=30)
-        r.raise_for_status()  # ensure the request succeeded
-        data_str = r.text
-        # JSON Lines format
-        df = pd.read_json(io.StringIO(data_str), lines=True)
-        # Clean string columns
+        r = requests.get(url)
+        r.raise_for_status()
+        df = pd.read_json(io.StringIO(r.text), lines=True)
         for col in df.columns:
             if df[col].dtype == object:
                 df[col] = df[col].map(lambda x: x.strip() if isinstance(x, str) else x)
         return df
     except Exception as e:
         st.error(f"Failed to load dataset: {e}")
-        st.stop()
         return pd.DataFrame()
 
 df = load_dataset(GITHUB_RAW_URL)
-st.success(f"✅ Dataset loaded: {len(df)} records")
+if df.empty:
+    st.stop()
 
 # --------------------------- 4. Options ---------------------------
 disabilities = ["Visual Impairment", "Hearing Impairment", "Physical Disabilities",
@@ -66,46 +68,46 @@ def map_group(qualification):
         return ["Group A", "Group B", "Group C", "Group D"]
     elif q == "12th standard":
         return ["Group C", "Group D"]
+    elif q == "10th standard":
+        return ["Group D"]
     else:
         return ["Group D"]
 
 def filter_jobs(disability=None, subcategory=None, qualification=None, department=None, activities=None):
     df_filtered = df.copy()
-
     if disability:
         d = disability.strip().lower()
         mask = pd.Series(False, index=df_filtered.index)
         for col in df_filtered.columns:
             if "disabilities" in col.lower():
                 mask |= df_filtered[col].astype(str).str.lower().str.contains(d, regex=False, na=False)
-        df_filtered = df_filtered[mask] if mask.any() else df_filtered
-
+        if mask.any():
+            df_filtered = df_filtered[mask]
     if subcategory:
         sub_lower = subcategory.strip().lower()
         mask_sub = pd.Series(False, index=df_filtered.index)
         for col in df_filtered.columns:
             if "subcategory" in col.lower():
                 mask_sub |= df_filtered[col].astype(str).str.lower().str.contains(sub_lower, regex=False, na=False)
-        df_filtered = df_filtered[mask_sub] if mask_sub.any() else df_filtered
-
-    if qualification:
-        allowed_groups = map_group(qualification)
-        if "group" in df_filtered.columns:
-            mask_group = df_filtered["group"].astype(str).str.strip().isin(allowed_groups)
-            df_filtered = df_filtered[mask_group] if mask_group.any() else df_filtered
-
+        if mask_sub.any():
+            df_filtered = df_filtered[mask_sub]
+    allowed_groups = map_group(qualification) if qualification else []
+    if allowed_groups and "group" in df_filtered.columns:
+        mask_group = df_filtered["group"].astype(str).str.strip().isin(allowed_groups)
+        if mask_group.any():
+            df_filtered = df_filtered[mask_group]
     if department:
         dep_lower = department.strip().lower()
         if "department" in df_filtered.columns:
             mask_dep = df_filtered["department"].astype(str).str.lower().str.contains(dep_lower, regex=False, na=False)
-            df_filtered = df_filtered[mask_dep] if mask_dep.any() else df_filtered
-
+            if mask_dep.any():
+                df_filtered = df_filtered[mask_dep]
     if activities and "functional_requirements" in df_filtered.columns:
         df_filtered["functional_norm"] = df_filtered["functional_requirements"].astype(str).str.upper().str.replace(r'[^A-Z ]', '', regex=True)
         selected_norm = [a.split()[0].upper() for a in activities]
         mask_act = df_filtered["functional_norm"].apply(lambda fr: any(a in fr for a in selected_norm))
-        df_filtered = df_filtered[mask_act] if mask_act.any() else df_filtered
-
+        if mask_act.any():
+            df_filtered = df_filtered[mask_act]
     return df_filtered.reset_index(drop=True)
 
 def generate_pdf_tabulated(jobs_df):
@@ -114,56 +116,100 @@ def generate_pdf_tabulated(jobs_df):
     elements = []
     styles = getSampleStyleSheet()
     style_title = ParagraphStyle('Title', parent=styles['Heading1'], alignment=1, spaceAfter=5, fontSize=18)
+    style_subtitle = ParagraphStyle('Subtitle', parent=styles['Normal'], alignment=1, fontSize=12, spaceAfter=20)
     style_heading2 = ParagraphStyle('Heading2', parent=styles['Heading2'], spaceAfter=10, fontSize=14, textColor=colors.darkblue)
+    style_heading3 = ParagraphStyle('Heading3', parent=styles['Heading3'], spaceAfter=8, fontSize=13, textColor=colors.darkgreen)
+    style_heading4 = ParagraphStyle('Heading4', parent=styles['Heading4'], spaceAfter=6, fontSize=12, textColor=colors.darkred)
     style_text = ParagraphStyle('Text', parent=styles['Normal'], spaceAfter=10, fontSize=11, leading=15)
-
-    elements.append(Paragraph('<font color="darkblue">Suyog</font><font color="maroon">+</font>', style_title))
+    title_html = '<font color="darkblue">Suyog</font><font color="maroon">+</font>'
+    elements.append(Paragraph(title_html, style_title))
+    elements.append(Paragraph('<font color="darkblue">By DAIL NIEPMD</font>', style_title))
     elements.append(Spacer(1, 10))
     elements.append(Paragraph(f"Total Matches: {len(jobs_df)}", styles['Heading1']))
     elements.append(Spacer(1, 20))
-
     for _, job in jobs_df.iterrows():
         designation = str(job.get('designation', '-')).capitalize()
         group = str(job.get('group', '-')).capitalize()
         department = str(job.get('department', '-')).capitalize()
         elements.append(Paragraph(f"Designation: {designation}", style_heading2))
-        elements.append(Paragraph(f"Group: {group}", style_heading2))
-        elements.append(Paragraph(f"Department: {department}", style_heading2))
+        elements.append(Paragraph(f"Group: {group}", style_heading3))
+        elements.append(Paragraph(f"Department: {department}", style_heading4))
         elements.append(Spacer(1, 10))
-        for field in ["qualification_required", "functional_requirements", "nature_of_work", "working_conditions"]:
-            value = job.get(field, "-")
+        job_data = [
+            ("Qualification Required", job.get('qualification_required', '-')),
+            ("Functional Requirements", job.get('functional_requirements', '-')),
+            ("Disabilities Supported", " ".join([str(job.get(col, '')) for col in jobs_df.columns if "disabilities" in col.lower()])),
+            ("Nature of Work", job.get('nature_of_work', '-')),
+            ("Working Conditions", job.get('working_conditions', '-'))
+        ]
+        for field, value in job_data:
             wrapped_lines = "<br/>".join(wrap(str(value).capitalize(), 100))
-            elements.append(Paragraph(f"<b>{field.replace('_',' ').title()}:</b> {wrapped_lines}", style_text))
+            elements.append(Paragraph(f"<b>{field}:</b> {wrapped_lines}", style_text))
         elements.append(Spacer(1, 25))
         elements.append(Paragraph("<hr/>", style_text))
-
     doc.build(elements)
     buffer.seek(0)
     return buffer
 
-# --------------------------- 6. Streamlit UI ---------------------------
-st.title("👨‍💼 Suyog+ Job Finder for Persons with Disabilities")
+def tts_download_link(text, filename="tts.mp3"):
+    tts = gTTS(text=text, lang='en')
+    buffer = io.BytesIO()
+    tts.write_to_fp(buffer)
+    buffer.seek(0)
+    b64 = base64.b64encode(buffer.read()).decode()
+    return f'<a href="data:audio/mp3;base64,{b64}" download="{filename}">Download TTS</a>'
 
-with st.form("job_filter_form"):
-    disability = st.selectbox("Select your type of disability:", disabilities)
+# --------------------------- 6. Streamlit App ---------------------------
+st.title("👋 Suyog+ Job Finder for Persons with Disabilities")
+
+with st.form("job_filter"):
+    disability = st.selectbox("Select Disability Type", disabilities)
     subcategory = None
     if disability == "Intellectual and Developmental Disabilities":
-        subcategory = st.selectbox("Select subcategory:", intellectual_subcategories)
-    qualification = st.selectbox("Select highest qualification:", qualifications)
-    department = st.selectbox("Select department:", departments)
-    activities_selected = st.multiselect("Select functional activities:", activities)
+        subcategory = st.selectbox("Select Subcategory", intellectual_subcategories)
+    qualification = st.selectbox("Select Highest Qualification", qualifications)
+    department = st.selectbox("Select Department", departments)
+    activities_selected = st.multiselect("Select Functional Activities (or use voice input below)", activities)
+    
     submitted = st.form_submit_button("Find Jobs")
 
+# --------------------------- 7. Voice Recognition ---------------------------
+st.subheader("🎤 Speak Functional Activities")
+st.write("Click below, speak your activities (e.g., 'S Sitting, W Walking'), then stop.")
+
+if "voice_text" not in st.session_state:
+    st.session_state.voice_text = ""
+
+rtc_config = RTCConfiguration({"iceServers": [{"urls": ["stun:stun.l.google.com:19302"]}]})
+
+webrtc_ctx = webrtc_streamer(key="speech", mode="RTCOnly", rtc_configuration=rtc_config)
+
+if webrtc_ctx.state.playing:
+    st.info("Listening... Speak now!")
+    if webrtc_ctx.audio_receiver:
+        audio_frames = webrtc_ctx.audio_receiver.get_frames(timeout=1)
+        if audio_frames:
+            recognizer = sr.Recognizer()
+            try:
+                audio_data = sr.AudioData(b''.join([f.to_bytes() for f in audio_frames]), 16000, 2)
+                text = recognizer.recognize_google(audio_data)
+                st.session_state.voice_text = text
+            except:
+                pass
+
+if st.session_state.voice_text:
+    st.write(f"🗣️ Recognized Activities: {st.session_state.voice_text}")
+    if st.button("Use Recognized Activities"):
+        activities_selected += [a.strip() for a in st.session_state.voice_text.split(",")]
+
+# --------------------------- 8. Run Filter ---------------------------
 if submitted:
+    st.info("🔍 Searching jobs...")
     df_results = filter_jobs(disability, subcategory, qualification, department, activities_selected)
     if df_results.empty:
         st.warning("😞 Sorry, no jobs matched your profile.")
     else:
         st.success(f"✅ {len(df_results)} jobs matched your profile!")
-
-        # Show table
-        st.dataframe(df_results)
-
-        # Generate PDF and provide download
         pdf_buffer = generate_pdf_tabulated(df_results)
-        st.download_button("📄 Download Job Matches PDF", pdf_buffer, file_name="job_matches.pdf")
+        st.download_button("📄 Download PDF", data=pdf_buffer, file_name="job_matches.pdf", mime="application/pdf")
+        st.markdown(tts_download_link(f"{len(df_results)} jobs matched your profile!"), unsafe_allow_html=True)
