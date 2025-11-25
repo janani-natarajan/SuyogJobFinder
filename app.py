@@ -10,7 +10,7 @@ from reportlab.lib import colors
 from textwrap import wrap
 
 # --------------------------- 2. Fetch Dataset from GitHub -----------
-GITHUB_RAW_URL = "../SuyogJobFinder/cleaned_data.jsonl"
+GITHUB_RAW_URL = "./cleaned_data.jsonl"
 
 @st.cache_data
 def load_dataset(url):
