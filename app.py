@@ -11,18 +11,18 @@ from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.lib import colors
 from textwrap import wrap
-from gtts import gTTS
-import tempfile
 
 # --------------------------- 3. Load Dataset from GitHub ---------------------------
-GITHUB_URL = "https://raw.githubusercontent.com/janani-natarajan/SuyogJobFinder/main/cleaned_data.jsonl"
+GITHUB_RAW_URL = "https://raw.githubusercontent.com/janani-natarajan/SuyogJobFinder/main/cleaned_data.jsonl"
 
 @st.cache_data(show_spinner=True)
 def load_dataset(url):
     try:
         r = requests.get(url, timeout=30)
-        r.raise_for_status()
-        df = pd.read_json(io.StringIO(r.text), lines=True)
+        r.raise_for_status()  # ensure the request succeeded
+        data_str = r.text
+        # JSON Lines format
+        df = pd.read_json(io.StringIO(data_str), lines=True)
         # Clean string columns
         for col in df.columns:
             if df[col].dtype == object:
@@ -33,7 +33,7 @@ def load_dataset(url):
         st.stop()
         return pd.DataFrame()
 
-df = load_dataset(GITHUB_URL)
+df = load_dataset(GITHUB_RAW_URL)
 st.success(f"✅ Dataset loaded: {len(df)} records")
 
 # --------------------------- 4. Options ---------------------------
