@@ -27,7 +27,8 @@ def load_dataset(url):
         st.error(f"Failed to load dataset: {e}")
         return pd.DataFrame()
 
-df = load_dataset(GITHUB_RAW_URL)
+# df = load_dataset(GITHUB_RAW_URL)
+df = pd.read_json("cleaned_data.jsonl", lines=True)
 
 if df.empty:
     st.stop()
