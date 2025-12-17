@@ -8,9 +8,10 @@ from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.lib import colors
 from textwrap import wrap
+import './cleaned_data.jsonl' as cleaned_data
 
 # --------------------------- 2. Fetch Dataset from GitHub -----------
-GITHUB_RAW_URL = "cleaned_data.jsonl"
+GITHUB_RAW_URL = cleaned_data
 
 @st.cache_data
 def load_dataset(url):
