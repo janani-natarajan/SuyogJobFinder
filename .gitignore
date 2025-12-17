@@ -1,27 +1,12 @@
-# Ignore Python virtual environment
-env/
-
-# Ignore large binaries
-*.exe
-*.dll
-
-# Ignore Python cache
+# Python
 __pycache__/
-*.py[cod]
+*.pyc
 
-# Ignore system files
+# Virtual environment
+venv/
+
+# OS files
 .DS_Store
-Thumbs.db
 
-# Ignore logs
-*.log
-
-# Ignore dataset if you want (optional)
-cleaned_data.jsonl
-
-# Ignore PDFs
-*.pdf
-
-# Ignore audio files
-*.wav
-*.mp3
+# Environment variables
+.env
