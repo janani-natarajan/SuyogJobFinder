@@ -62,40 +62,58 @@ def map_group(qualification):
 def filter_jobs(disability=None, subcategory=None, qualification=None, department=None, activities=None):
     df_filtered = df.copy()
 
+    # -------- Disability --------
     if disability:
         d = disability.lower()
         mask = pd.Series(False, index=df_filtered.index)
         for col in df_filtered.columns:
             if "disabilities" in col.lower():
                 mask |= df_filtered[col].astype(str).str.lower().str.contains(d, na=False)
-        df_filtered = df_filtered[mask] if mask.any() else df_filtered
+        if mask.any():
+            df_filtered = df_filtered[mask]
 
+    # -------- Subcategory --------
     if subcategory:
         s = subcategory.lower()
         mask = pd.Series(False, index=df_filtered.index)
         for col in df_filtered.columns:
             if "subcategory" in col.lower():
                 mask |= df_filtered[col].astype(str).str.lower().str.contains(s, na=False)
-        df_filtered = df_filtered[mask] if mask.any() else df_filtered
+        if mask.any():
+            df_filtered = df_filtered[mask]
 
+    # -------- Qualification Group --------
     allowed_groups = map_group(qualification)
     if allowed_groups and "group" in df_filtered.columns:
-        df_filtered = df_filtered[df_filtered["group"].isin(allowed_groups)]
+        mask = df_filtered["group"].astype(str).isin(allowed_groups)
+        if mask.any():
+            df_filtered = df_filtered[mask]
 
+    # -------- Department --------
     if department and "department" in df_filtered.columns:
-        df_filtered = df_filtered[
-            df_filtered["department"].astype(str).str.lower().str.contains(department.lower(), na=False)
-        ]
+        mask = df_filtered["department"].astype(str).str.lower().str.contains(
+            department.lower(), na=False
+        )
+        if mask.any():
+            df_filtered = df_filtered[mask]
 
+    # -------- Functional Activities --------
     if activities and "functional_requirements" in df_filtered.columns:
         df_filtered["functional_norm"] = (
             df_filtered["functional_requirements"]
-            .astype(str).str.upper()
+            .astype(str)
+            .str.upper()
+            .str.replace(r"[^A-Z ]", "", regex=True)
         )
+
         selected = [a.split()[0].upper() for a in activities]
-        df_filtered = df_filtered[
-            df_filtered["functional_norm"].apply(lambda x: any(a in x for a in selected))
-        ]
+
+        mask = df_filtered["functional_norm"].apply(
+            lambda x: any(a in x for a in selected)
+        )
+
+        if mask.any():
+            df_filtered = df_filtered[mask]
 
     return df_filtered.reset_index(drop=True)
 
