@@ -74,11 +74,22 @@ def map_group(qualification):
 def format_department(name):
     return str(name).title()
 
+def normalize_group(value):
+    """Extract A/B/C/D from any group format"""
+    if not value:
+        return ""
+    value = str(value).upper()
+    for g in ["A", "B", "C", "D"]:
+        if g in value:
+            return g
+    return ""
+
 def filter_jobs(disability=None, subcategory=None, qualification=None,
                 department=None, activities=None):
 
     df_filtered = df.copy()
 
+    # -------- Disability --------
     if disability:
         d = disability.lower()
         mask = df_filtered.apply(
@@ -91,6 +102,7 @@ def filter_jobs(disability=None, subcategory=None, qualification=None,
         )
         df_filtered = df_filtered[mask]
 
+    # -------- Subcategory --------
     if subcategory:
         s = subcategory.lower()
         mask = df_filtered.apply(
@@ -103,18 +115,20 @@ def filter_jobs(disability=None, subcategory=None, qualification=None,
         )
         df_filtered = df_filtered[mask]
 
+    # -------- Group --------
     allowed_groups = map_group(qualification)
     if "group" in df_filtered.columns:
-        df_filtered = df_filtered[df_filtered["group"].isin(allowed_groups)]
+        df_filtered["group_norm"] = df_filtered["group"].apply(normalize_group)
+        df_filtered = df_filtered[df_filtered["group_norm"].isin(allowed_groups)]
 
+    # -------- Department --------
     if department and "department" in df_filtered.columns:
         df_filtered = df_filtered[
-            df_filtered["department"]
-            .astype(str)
-            .str.lower()
-            .str.contains(department.lower())
+            df_filtered["department"].astype(str).str.lower().str.strip()
+            == department.lower().strip()
         ]
 
+    # -------- Functional Activities --------
     if activities and "functional_requirements" in df_filtered.columns:
         selected = [a.split()[0] for a in activities]
         df_filtered = df_filtered[
@@ -143,7 +157,7 @@ def generate_pdf(jobs_df):
     elements.append(Spacer(1, 20))
 
     for _, job in jobs_df.iterrows():
-        group = GROUP_LEVEL_MAP.get(job.get("group", ""), job.get("group", "-"))
+        group = GROUP_LEVEL_MAP.get(normalize_group(job.get("group")), job.get("group", "-"))
         department = format_department(job.get("department", "-"))
 
         elements.append(Paragraph(f"Designation: {job.get('designation','-')}", h2))
@@ -192,7 +206,9 @@ if st.button("Find Jobs"):
     if results.empty:
         st.warning("😞 Sorry, no jobs matched your profile.")
     else:
-        results["Group"] = results["group"].map(GROUP_LEVEL_MAP)
+        results["Group"] = results["group"].apply(
+            lambda g: GROUP_LEVEL_MAP.get(normalize_group(g), g)
+        )
         results["Department"] = results["department"].apply(format_department)
 
         st.success(f"✅ {len(results)} job(s) matched your profile.")
