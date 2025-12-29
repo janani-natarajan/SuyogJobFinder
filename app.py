@@ -10,8 +10,6 @@ from textwrap import wrap
 
 # --------------------------- 2. Load Dataset ---------------------------
 df = pd.read_json("cleaned_data.jsonl", lines=True)
-
-# ---- REMOVE TIMESTAMP / DATE COLUMNS ----
 df = df.loc[:, ~df.columns.str.contains("time|date", case=False)]
 
 if df.empty:
@@ -25,6 +23,18 @@ GROUP_LEVEL_MAP = {
     "C": "C (Level 3)",
     "D": "D (Level 4)"
 }
+
+qualifications = [
+    "10th Standard", "12th Standard", "Certificate", "Diploma",
+    "Graduate", "Post Graduate", "Doctorate"
+]
+
+activities = [
+    "S Sitting", "ST Standing", "W Walking", "BN Bending", "L Lifting",
+    "PP Pulling & Pushing", "KC Kneeling & Crouching",
+    "MF Manipulation with Fingers", "RW Reading & Writing",
+    "SE Seeing", "H Hearing", "C Communication"
+]
 
 departments = (
     df["department"]
@@ -49,12 +59,33 @@ def normalize_group(value):
             return g
     return ""
 
-# --------------------------- 5. Filter Jobs by Department ONLY ---------------------------
-def filter_jobs_by_department(department=None):
-    if not department or "department" not in df.columns:
-        return df.copy()
-    mask = df["department"].astype(str).str.lower().str.strip() == department.lower().strip()
-    return df[mask].reset_index(drop=True)
+def map_group(qualification):
+    q = qualification.lower()
+    if q in ["Graduate", "Post graduate", "Doctorate"]:
+        return ["A", "B", "C", "D"]
+    elif q == "12th standard":
+        return ["C", "D"]
+    return ["D"]
+
+# --------------------------- 5. Filter Jobs ---------------------------
+def filter_jobs(department, qualification, activities):
+    df_filtered = df.copy()
+
+    # ---- Department ----
+    df_filtered = df_filtered[df_filtered["department"].astype(str).str.lower().str.strip() == department.lower().strip()]
+
+    # ---- Qualification ----
+    allowed_groups = map_group(qualification)
+    df_filtered["group_norm"] = df_filtered["group"].apply(normalize_group)
+    df_filtered = df_filtered[df_filtered["group_norm"].isin(allowed_groups)]
+
+    # ---- Functional Activities ----
+    selected = [a.split()[0] for a in activities]
+    df_filtered = df_filtered[df_filtered["functional_requirements"].astype(str).apply(
+        lambda x: all(a in x for a in selected)
+    )]
+
+    return df_filtered.reset_index(drop=True)
 
 # --------------------------- 6. PDF Generation ---------------------------
 def generate_pdf(jobs_df):
@@ -105,24 +136,34 @@ def generate_pdf(jobs_df):
 st.title("Suyog+ Job Finder")
 st.markdown("Find suitable jobs for persons with disabilities in India.")
 
-department = st.selectbox("Select department:", departments) if departments else None
+department = st.selectbox("Select department:", [""] + departments)
+qualification = st.selectbox("Select highest qualification:", [""] + qualifications)
+selected_activities = st.multiselect("Select functional activities:", activities)
 
 if st.button("Find Jobs"):
-    results = filter_jobs_by_department(department)
-
-    if results.empty:
-        st.warning("😞 Sorry, no jobs matched your selected department.")
+    # Check mandatory selections
+    if not department:
+        st.warning("Please select a department.")
+    elif not qualification:
+        st.warning("Please select a qualification.")
+    elif not selected_activities:
+        st.warning("Please select at least one functional activity.")
     else:
-        results["Group"] = results["group"].apply(lambda g: GROUP_LEVEL_MAP.get(normalize_group(g), g))
-        results["Department"] = results["department"].apply(format_department)
+        results = filter_jobs(department, qualification, selected_activities)
 
-        st.success(f"✅ {len(results)} job(s) found in {department}.")
-        st.dataframe(results)
+        if results.empty:
+            st.warning("😞 No jobs found for the selected criteria.")
+        else:
+            results["Group"] = results["group"].apply(lambda g: GROUP_LEVEL_MAP.get(normalize_group(g), g))
+            results["Department"] = results["department"].apply(format_department)
 
-        pdf = generate_pdf(results)
-        st.download_button(
-            "Download PDF of Jobs",
-            data=pdf,
-            file_name="job_matches.pdf",
-            mime="application/pdf"
-        )
+            st.success(f"✅ {len(results)} job(s) found.")
+            st.dataframe(results)
+
+            pdf = generate_pdf(results)
+            st.download_button(
+                "Download PDF of Jobs",
+                data=pdf,
+                file_name="job_matches.pdf",
+                mime="application/pdf"
+            )
