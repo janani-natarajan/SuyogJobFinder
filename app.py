@@ -84,7 +84,7 @@ def normalize_group(value):
             return g
     return ""
 
-# --------------------------- 5. Optional Filter ---------------------------
+# --------------------------- 5. Filter Function (Optional Filters) ---------------------------
 def filter_jobs(disability=None, subcategory=None, qualification=None,
                 department=None, activities=None):
 
@@ -93,51 +93,43 @@ def filter_jobs(disability=None, subcategory=None, qualification=None,
     # ---- Disability ----
     if disability:
         d = disability.lower()
-        mask = df_filtered.apply(
+        df_filtered = df_filtered[df_filtered.apply(
             lambda row: any(
                 d in str(row[col]).lower()
                 for col in df_filtered.columns
                 if "disabilit" in col.lower()
-            ),
-            axis=1
-        )
-        df_filtered = df_filtered[mask]
+            ), axis=1
+        )]
 
     # ---- Subcategory ----
     if subcategory:
         s = subcategory.lower()
-        mask = df_filtered.apply(
+        df_filtered = df_filtered[df_filtered.apply(
             lambda row: any(
                 s in str(row[col]).lower()
                 for col in df_filtered.columns
                 if "subcategory" in col.lower()
-            ),
-            axis=1
-        )
-        df_filtered = df_filtered[mask]
+            ), axis=1
+        )]
 
-    # ---- Group ----
-    if qualification:
+    # ---- Group / Qualification ----
+    if qualification and "group" in df_filtered.columns:
         allowed_groups = map_group(qualification)
-        if "group" in df_filtered.columns:
-            df_filtered["group_norm"] = df_filtered["group"].apply(normalize_group)
-            mask = df_filtered["group_norm"].isin(allowed_groups)
-            df_filtered = df_filtered[mask]
+        df_filtered["group_norm"] = df_filtered["group"].apply(normalize_group)
+        df_filtered = df_filtered[df_filtered["group_norm"].isin(allowed_groups)]
 
     # ---- Department ----
     if department:
         df_filtered = df_filtered[
-            df_filtered["department"].astype(str).str.lower().str.strip()
-            == department.lower().strip()
+            df_filtered["department"].astype(str).str.lower().str.contains(department.lower())
         ]
 
     # ---- Functional Activities ----
-    if activities:
+    if activities and "functional_requirements" in df_filtered.columns:
         selected = [a.split()[0].lower() for a in activities]
-        mask = df_filtered["functional_requirements"].astype(str).apply(
+        df_filtered = df_filtered[df_filtered["functional_requirements"].astype(str).apply(
             lambda x: any(a in x.lower() for a in selected)
-        )
-        df_filtered = df_filtered[mask]
+        )]
 
     return df_filtered.reset_index(drop=True)
 
@@ -194,17 +186,17 @@ def generate_pdf(jobs_df):
 st.title("Suyog+ Job Finder")
 st.markdown("Find suitable jobs for persons with disabilities in India.")
 
-disability = st.selectbox("Select your type of disability (optional):", [""] + disabilities)
+disability = st.selectbox("Select your type of disability *:", [""] + disabilities)
 
 subcategory = None
 if disability == "Intellectual and Developmental Disabilities":
-    subcategory = st.selectbox("Select the subcategory (optional):", [""] + intellectual_subcategories)
+    subcategory = st.selectbox("Select the subcategory *:", [""] + intellectual_subcategories)
 
-qualification = st.selectbox("Select highest qualification (optional):", [""] + qualifications)
+qualification = st.selectbox("Select highest qualification *:", [""] + qualifications)
 
-department = st.selectbox("Select department (optional):", [""] + departments) if departments else None
+department = st.selectbox("Select department *:", [""] + departments) if departments else None
 
-selected_activities = st.multiselect("Select functional activities (optional):", activities)
+selected_activities = st.multiselect("Select functional activities *:", activities)
 
 if st.button("Find Jobs"):
     results = filter_jobs(
