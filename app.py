@@ -1,7 +1,6 @@
 # --------------------------- 1. Imports ---------------------------
 import streamlit as st
 import pandas as pd
-import requests
 import io
 from reportlab.lib.pagesizes import A3
 from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer
@@ -18,11 +17,24 @@ df = df.loc[:, ~df.columns.str.contains("time|date", case=False)]
 if df.empty:
     st.stop()
 
-# --------------------------- 3. Options ---------------------------
+# --------------------------- 3. Group → Level Mapping ---------------------------
+GROUP_LEVEL_MAP = {
+    "Group A": "A (Level 1)",
+    "Group B": "B (Level 2)",
+    "Group C": "C (Level 3)",
+    "Group D": "D (Level 4)",
+    "A": "A (Level 1)",
+    "B": "B (Level 2)",
+    "C": "C (Level 3)",
+    "D": "D (Level 4)",
+}
+
+# --------------------------- 4. Options ---------------------------
 disabilities = [
     "Visual Impairment", "Hearing Impairment", "Physical Disabilities",
     "Neurological Disabilities", "Blood Disorders",
-    "Intellectual and Developmental Disabilities", "Mental Illness", "Multiple Disabilities"
+    "Intellectual and Developmental Disabilities",
+    "Mental Illness", "Multiple Disabilities"
 ]
 
 intellectual_subcategories = [
@@ -38,8 +50,16 @@ qualifications = [
     "Graduate", "Post Graduate", "Doctorate"
 ]
 
-departments = df.get("department")
-departments = departments.dropna().unique().tolist() if departments is not None else []
+# ---- Capitalize department names ----
+departments = (
+    df["department"]
+    .dropna()
+    .astype(str)
+    .str.title()
+    .unique()
+    .tolist()
+    if "department" in df.columns else []
+)
 
 activities = [
     "S Sitting", "ST Standing", "W Walking", "BN Bending", "L Lifting",
@@ -48,7 +68,7 @@ activities = [
     "SE Seeing", "H Hearing", "C Communication"
 ]
 
-# --------------------------- 4. Helper Functions ---------------------------
+# --------------------------- 5. Helper Functions ---------------------------
 def map_group(qualification):
     q = qualification.strip().lower() if qualification else ""
     if q in ["graduate", "post graduate", "doctorate"]:
@@ -59,7 +79,9 @@ def map_group(qualification):
         return ["Group D"]
     return []
 
-def filter_jobs(disability=None, subcategory=None, qualification=None, department=None, activities=None):
+def filter_jobs(disability=None, subcategory=None,
+                qualification=None, department=None, activities=None):
+
     df_filtered = df.copy()
 
     # -------- Disability --------
@@ -118,12 +140,9 @@ def filter_jobs(disability=None, subcategory=None, qualification=None, departmen
     return df_filtered.reset_index(drop=True)
 
 def generate_pdf_tabulated(jobs_df):
-    jobs_df = jobs_df.loc[:, ~jobs_df.columns.str.contains("time|date", case=False)]
-
     buffer = io.BytesIO()
     doc = SimpleDocTemplate(buffer, pagesize=A3)
     elements = []
-    styles = getSampleStyleSheet()
 
     title = ParagraphStyle("title", fontSize=18, alignment=1)
     h2 = ParagraphStyle("h2", fontSize=14, textColor=colors.darkblue)
@@ -137,9 +156,12 @@ def generate_pdf_tabulated(jobs_df):
     elements.append(Spacer(1, 20))
 
     for _, job in jobs_df.iterrows():
+        group_level = GROUP_LEVEL_MAP.get(str(job.get("group")), job.get("group", "-"))
+        department = str(job.get("department", "-")).title()
+
         elements.append(Paragraph(f"Designation: {job.get('designation','-')}", h2))
-        elements.append(Paragraph(f"Group: {job.get('group','-')}", h3))
-        elements.append(Paragraph(f"Department: {job.get('department','-')}", h3))
+        elements.append(Paragraph(f"Group: {group_level}", h3))
+        elements.append(Paragraph(f"Department: {department}", h3))
         elements.append(Spacer(1, 10))
 
         fields = [
@@ -159,7 +181,7 @@ def generate_pdf_tabulated(jobs_df):
     buffer.seek(0)
     return buffer
 
-# --------------------------- 5. Streamlit UI ---------------------------
+# --------------------------- 6. Streamlit UI ---------------------------
 st.title("Suyog+ Job Finder")
 st.markdown("Find suitable jobs for persons with disabilities in India.")
 
@@ -176,11 +198,16 @@ department = st.selectbox("Select department:", departments) if departments else
 selected_activities = st.multiselect("Select functional activities:", activities)
 
 if st.button("Find Jobs"):
-    results = filter_jobs(disability, subcategory, qualification, department, selected_activities)
+    results = filter_jobs(
+        disability, subcategory, qualification, department, selected_activities
+    )
 
     if results.empty:
         st.warning("😞 Sorry, no jobs matched your profile.")
     else:
+        results["Group (Level)"] = results["group"].map(GROUP_LEVEL_MAP)
+        results["Department"] = results["department"].astype(str).str.title()
+
         st.success(f"✅ {len(results)} job(s) matched your profile.")
         st.dataframe(results)
 
