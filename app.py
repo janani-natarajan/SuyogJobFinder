@@ -84,21 +84,24 @@ def normalize_group(value):
             return g
     return ""
 
-# --------------------------- 5. Filter Jobs (Mandatory) ---------------------------
-def filter_jobs(disability, subcategory, qualification, department, activities):
+# --------------------------- 5. Optional Filter ---------------------------
+def filter_jobs(disability=None, subcategory=None, qualification=None,
+                department=None, activities=None):
+
     df_filtered = df.copy()
 
     # ---- Disability ----
-    d = disability.lower()
-    mask = df_filtered.apply(
-        lambda row: any(
-            d in str(row[col]).lower()
-            for col in df_filtered.columns
-            if "disabilit" in col.lower()
-        ),
-        axis=1
-    )
-    df_filtered = df_filtered[mask]
+    if disability:
+        d = disability.lower()
+        mask = df_filtered.apply(
+            lambda row: any(
+                d in str(row[col]).lower()
+                for col in df_filtered.columns
+                if "disabilit" in col.lower()
+            ),
+            axis=1
+        )
+        df_filtered = df_filtered[mask]
 
     # ---- Subcategory ----
     if subcategory:
@@ -114,26 +117,27 @@ def filter_jobs(disability, subcategory, qualification, department, activities):
         df_filtered = df_filtered[mask]
 
     # ---- Group ----
-    allowed_groups = map_group(qualification)
-    if "group" in df_filtered.columns:
-        df_filtered["group_norm"] = df_filtered["group"].apply(normalize_group)
-        df_filtered = df_filtered[df_filtered["group_norm"].isin(allowed_groups)]
+    if qualification:
+        allowed_groups = map_group(qualification)
+        if "group" in df_filtered.columns:
+            df_filtered["group_norm"] = df_filtered["group"].apply(normalize_group)
+            mask = df_filtered["group_norm"].isin(allowed_groups)
+            df_filtered = df_filtered[mask]
 
     # ---- Department ----
-    if department and "department" in df_filtered.columns:
+    if department:
         df_filtered = df_filtered[
             df_filtered["department"].astype(str).str.lower().str.strip()
             == department.lower().strip()
         ]
 
     # ---- Functional Activities ----
-    if activities and "functional_requirements" in df_filtered.columns:
+    if activities:
         selected = [a.split()[0].lower() for a in activities]
-        df_filtered = df_filtered[
-            df_filtered["functional_requirements"].astype(str).apply(
-                lambda x: any(a in x.lower() for a in selected)
-            )
-        ]
+        mask = df_filtered["functional_requirements"].astype(str).apply(
+            lambda x: any(a in x.lower() for a in selected)
+        )
+        df_filtered = df_filtered[mask]
 
     return df_filtered.reset_index(drop=True)
 
@@ -161,14 +165,14 @@ def generate_pdf(jobs_df):
         department = format_department(job.get("department", "-"))
         disability = job.get("disabilities", "-")
         qualification = job.get("qualification_required", "-")
-        functional = job.get("functional_requirements", "-")
+        functional_req = job.get("functional_requirements", "-")
 
         elements.append(Paragraph(f"Designation: {job.get('designation','-')}", h2))
         elements.append(Paragraph(f"Group: {group}", h3))
         elements.append(Paragraph(f"Department: {department}", h3))
         elements.append(Paragraph(f"Disability: {disability}", h3))
-        elements.append(Paragraph(f"Qualification Required: {qualification}", h3))
-        elements.append(Paragraph(f"Functional Requirements: {functional}", h3))
+        elements.append(Paragraph(f"Qualification: {qualification}", h3))
+        elements.append(Paragraph(f"Functional Requirements: {functional_req}", h3))
         elements.append(Spacer(1, 10))
 
         fields = [
@@ -190,30 +194,37 @@ def generate_pdf(jobs_df):
 st.title("Suyog+ Job Finder")
 st.markdown("Find suitable jobs for persons with disabilities in India.")
 
-disability = st.selectbox("Select your type of disability:", disabilities)
+disability = st.selectbox("Select your type of disability (optional):", [""] + disabilities)
 
 subcategory = None
 if disability == "Intellectual and Developmental Disabilities":
-    subcategory = st.selectbox("Select the subcategory:", intellectual_subcategories)
+    subcategory = st.selectbox("Select the subcategory (optional):", [""] + intellectual_subcategories)
 
-qualification = st.selectbox("Select highest qualification:", qualifications)
+qualification = st.selectbox("Select highest qualification (optional):", [""] + qualifications)
 
-department = st.selectbox("Select department:", departments) if departments else None
+department = st.selectbox("Select department (optional):", [""] + departments) if departments else None
 
-selected_activities = st.multiselect("Select functional activities:", activities)
+selected_activities = st.multiselect("Select functional activities (optional):", activities)
 
 if st.button("Find Jobs"):
     results = filter_jobs(
-        disability, subcategory, qualification, department, selected_activities
+        disability or None,
+        subcategory or None,
+        qualification or None,
+        department or None,
+        selected_activities or None
     )
 
     if results.empty:
-        st.warning("😞 Sorry, no jobs matched your profile. Please adjust your selections.")
+        st.warning("😞 Sorry, no jobs matched your profile.")
     else:
         results["Group"] = results["group"].apply(
             lambda g: GROUP_LEVEL_MAP.get(normalize_group(g), g)
         )
         results["Department"] = results["department"].apply(format_department)
+        results["Disability"] = results["disabilities"]
+        results["Qualification"] = results["qualification_required"]
+        results["Functional Requirements"] = results["functional_requirements"]
 
         st.success(f"✅ {len(results)} job(s) matched your profile.")
         st.dataframe(results)
