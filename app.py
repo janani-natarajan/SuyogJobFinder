@@ -26,33 +26,19 @@ GROUP_LEVEL_MAP = {
     "D": "D (Level 4)"
 }
 
-disabilities = [
-    "Visual Impairment", "Hearing Impairment", "Physical Disabilities",
-    "Neurological Disabilities", "Blood Disorders",
-    "Intellectual and Developmental Disabilities",
-    "Mental Illness", "Multiple Disabilities"
-]
+def normalize_group(value):
+    if not value:
+        return ""
+    value = str(value).upper()
+    for g in ["A", "B", "C", "D"]:
+        if g in value:
+            return g
+    return ""
 
-intellectual_subcategories = [
-    "Autism Spectrum Disorder (ASD M)",
-    "Autism Spectrum Disorder (ASD MoD)",
-    "Intellectual Disability (ID)",
-    "Specific Learning Disability (SLD)",
-    "Mental Illness"
-]
+def format_department(name):
+    return str(name).title()
 
-qualifications = [
-    "10th Standard", "12th Standard", "Certificate", "Diploma",
-    "Graduate", "Post Graduate", "Doctorate"
-]
-
-activities = [
-    "S Sitting", "ST Standing", "W Walking", "BN Bending", "L Lifting",
-    "PP Pulling & Pushing", "KC Kneeling & Crouching",
-    "MF Manipulation with Fingers", "RW Reading & Writing",
-    "SE Seeing", "H Hearing", "C Communication"
-]
-
+# --------------------------- 4. Departments ---------------------------
 departments = (
     df["department"]
     .dropna()
@@ -63,89 +49,20 @@ departments = (
     if "department" in df.columns else []
 )
 
-# --------------------------- 4. Helper Functions ---------------------------
-def map_group(qualification):
-    q = qualification.lower()
-    if q in ["graduate", "post graduate", "doctorate"]:
-        return ["A", "B", "C", "D"]
-    elif q == "12th standard":
-        return ["C", "D"]
-    return ["D"]
+departments.sort()
 
-def format_department(name):
-    return str(name).title()
-
-def normalize_group(value):
-    if not value:
-        return ""
-    value = str(value).upper()
-    for g in ["A", "B", "C", "D"]:
-        if g in value:
-            return g
-    return ""
-
-# --------------------------- 5. SAFE FILTER (CRITICAL FIX) ---------------------------
-def filter_jobs(disability=None, subcategory=None, qualification=None,
-                department=None, activities=None):
-
+# --------------------------- 5. FILTER — DEPARTMENT ONLY ---------------------------
+def filter_jobs(department=None):
     df_filtered = df.copy()
 
-    # ---- Disability ----
-    if disability:
-        d = disability.lower()
-        mask = df_filtered.apply(
-            lambda row: any(
-                d in str(row[col]).lower()
-                for col in df_filtered.columns
-                if "disabilit" in col.lower()
-            ),
-            axis=1
-        )
-        if mask.any():
-            df_filtered = df_filtered[mask]
-
-    # ---- Subcategory ----
-    if subcategory:
-        s = subcategory.lower()
-        mask = df_filtered.apply(
-            lambda row: any(
-                s in str(row[col]).lower()
-                for col in df_filtered.columns
-                if "subcategory" in col.lower()
-            ),
-            axis=1
-        )
-        if mask.any():
-            df_filtered = df_filtered[mask]
-
-    # ---- Group ----
-    allowed_groups = map_group(qualification)
-    if "group" in df_filtered.columns:
-        df_filtered["group_norm"] = df_filtered["group"].apply(normalize_group)
-        mask = df_filtered["group_norm"].isin(allowed_groups)
-        if mask.any():
-            df_filtered = df_filtered[mask]
-
-    # ---- Department ----
     if department and "department" in df_filtered.columns:
-        mask = (
+        df_filtered = df_filtered[
             df_filtered["department"]
             .astype(str)
             .str.lower()
             .str.strip()
             == department.lower().strip()
-        )
-        if mask.any():
-            df_filtered = df_filtered[mask]
-
-    # ---- Functional Activities ----
-    if activities and "functional_requirements" in df_filtered.columns:
-        selected = [a.split()[0] for a in activities]
-        mask = df_filtered["functional_requirements"].astype(str).apply(
-            lambda x: any(a in x for a in selected)
-        )
-        if mask.any():
-            df_filtered = df_filtered[mask]
+        ]
 
     return df_filtered.reset_index(drop=True)
 
@@ -169,7 +86,9 @@ def generate_pdf(jobs_df):
     ]
 
     for _, job in jobs_df.iterrows():
-        group = GROUP_LEVEL_MAP.get(normalize_group(job.get("group")), job.get("group", "-"))
+        group = GROUP_LEVEL_MAP.get(
+            normalize_group(job.get("group")), job.get("group", "-")
+        )
         department = format_department(job.get("department", "-"))
 
         elements.append(Paragraph(f"Designation: {job.get('designation','-')}", h2))
@@ -196,40 +115,32 @@ def generate_pdf(jobs_df):
 
 # --------------------------- 7. Streamlit UI ---------------------------
 st.title("Suyog+ Job Finder")
-st.markdown("Find suitable jobs for persons with disabilities in India.")
+st.markdown("### Jobs are displayed **only** based on the selected department")
 
-disability = st.selectbox("Select your type of disability:", disabilities)
-
-subcategory = None
-if disability == "Intellectual and Developmental Disabilities":
-    subcategory = st.selectbox("Select the subcategory:", intellectual_subcategories)
-
-qualification = st.selectbox("Select highest qualification:", qualifications)
-
-department = st.selectbox("Select department:", departments) if departments else None
-
-selected_activities = st.multiselect("Select functional activities:", activities)
+department = st.selectbox(
+    "Select Department:",
+    departments,
+    index=0 if departments else None
+)
 
 if st.button("Find Jobs"):
-    results = filter_jobs(
-        disability, subcategory, qualification, department, selected_activities
-    )
+    results = filter_jobs(department)
 
     if results.empty:
-        st.warning("😞 Sorry, no jobs matched your profile.")
+        st.warning("😞 No jobs found for this department.")
     else:
         results["Group"] = results["group"].apply(
             lambda g: GROUP_LEVEL_MAP.get(normalize_group(g), g)
         )
         results["Department"] = results["department"].apply(format_department)
 
-        st.success(f"✅ {len(results)} job(s) matched your profile.")
+        st.success(f"✅ {len(results)} job(s) found for {department}")
         st.dataframe(results)
 
         pdf = generate_pdf(results)
         st.download_button(
             "Download PDF of Jobs",
             data=pdf,
-            file_name="job_matches.pdf",
+            file_name=f"{department}_jobs.pdf",
             mime="application/pdf"
         )
