@@ -24,6 +24,21 @@ GROUP_LEVEL_MAP = {
     "D": "D (Level 4)"
 }
 
+disabilities = [
+    "Visual Impairment", "Hearing Impairment", "Physical Disabilities",
+    "Neurological Disabilities", "Blood Disorders",
+    "Intellectual and Developmental Disabilities",
+    "Mental Illness", "Multiple Disabilities"
+]
+
+intellectual_subcategories = [
+    "Autism Spectrum Disorder (ASD M)",
+    "Autism Spectrum Disorder (ASD MoD)",
+    "Intellectual Disability (ID)",
+    "Specific Learning Disability (SLD)",
+    "Mental Illness"
+]
+
 qualifications = [
     "10th Standard", "12th Standard", "Certificate", "Diploma",
     "Graduate", "Post Graduate", "Doctorate"
@@ -61,15 +76,36 @@ def normalize_group(value):
 
 def map_group(qualification):
     q = qualification.lower()
-    if q in ["Graduate", "Post graduate", "Doctorate"]:
+    if q in ["graduate", "post graduate", "doctorate"]:
         return ["A", "B", "C", "D"]
     elif q == "12th standard":
         return ["C", "D"]
     return ["D"]
 
 # --------------------------- 5. Filter Jobs ---------------------------
-def filter_jobs(department, qualification, activities):
+def filter_jobs(disability, subcategory, department, qualification, activities):
     df_filtered = df.copy()
+
+    # ---- Disability ----
+    d = disability.lower()
+    df_filtered = df_filtered[df_filtered.apply(
+        lambda row: any(
+            d in str(row[col]).lower()
+            for col in df_filtered.columns
+            if "disabilit" in col.lower()
+        ), axis=1
+    )]
+
+    # ---- Subcategory ----
+    if subcategory:
+        s = subcategory.lower()
+        df_filtered = df_filtered[df_filtered.apply(
+            lambda row: any(
+                s in str(row[col]).lower()
+                for col in df_filtered.columns
+                if "subcategory" in col.lower()
+            ), axis=1
+        )]
 
     # ---- Department ----
     df_filtered = df_filtered[df_filtered["department"].astype(str).str.lower().str.strip() == department.lower().strip()]
@@ -113,6 +149,9 @@ def generate_pdf(jobs_df):
         elements.append(Paragraph(f"Designation: {job.get('designation','-')}", h2))
         elements.append(Paragraph(f"Group: {group}", h3))
         elements.append(Paragraph(f"Department: {department}", h3))
+        elements.append(Paragraph(f"Disability: {job.get('disabilities','-')}", h3))
+        if "subcategory" in job and pd.notna(job["subcategory"]):
+            elements.append(Paragraph(f"Subcategory: {job.get('subcategory','-')}", h3))
         elements.append(Spacer(1, 10))
 
         fields = [
@@ -136,27 +175,37 @@ def generate_pdf(jobs_df):
 st.title("Suyog+ Job Finder")
 st.markdown("Find suitable jobs for persons with disabilities in India.")
 
+disability = st.selectbox("Select your type of disability:", [""] + disabilities)
+
+# Subcategory is required only if Intellectual & Developmental Disability
+subcategory = None
+if disability == "Intellectual and Developmental Disabilities":
+    subcategory = st.selectbox("Select subcategory:", [""] + intellectual_subcategories)
+
 department = st.selectbox("Select department:", [""] + departments)
 qualification = st.selectbox("Select highest qualification:", [""] + qualifications)
 selected_activities = st.multiselect("Select functional activities:", activities)
 
 if st.button("Find Jobs"):
-    # Check mandatory selections
-    if not department:
+    # Mandatory check
+    if not disability:
+        st.warning("Please select a disability.")
+    elif disability == "Intellectual and Developmental Disabilities" and not subcategory:
+        st.warning("Please select a subcategory.")
+    elif not department:
         st.warning("Please select a department.")
     elif not qualification:
         st.warning("Please select a qualification.")
     elif not selected_activities:
         st.warning("Please select at least one functional activity.")
     else:
-        results = filter_jobs(department, qualification, selected_activities)
+        results = filter_jobs(disability, subcategory, department, qualification, selected_activities)
 
         if results.empty:
             st.warning("😞 No jobs found for the selected criteria.")
         else:
             results["Group"] = results["group"].apply(lambda g: GROUP_LEVEL_MAP.get(normalize_group(g), g))
             results["Department"] = results["department"].apply(format_department)
-
             st.success(f"✅ {len(results)} job(s) found.")
             st.dataframe(results)
 
