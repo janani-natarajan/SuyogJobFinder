@@ -26,19 +26,6 @@ GROUP_LEVEL_MAP = {
     "D": "D (Level 4)"
 }
 
-def normalize_group(value):
-    if not value:
-        return ""
-    value = str(value).upper()
-    for g in ["A", "B", "C", "D"]:
-        if g in value:
-            return g
-    return ""
-
-def format_department(name):
-    return str(name).title()
-
-# --------------------------- 4. Departments ---------------------------
 departments = (
     df["department"]
     .dropna()
@@ -49,22 +36,25 @@ departments = (
     if "department" in df.columns else []
 )
 
-departments.sort()
+# --------------------------- 4. Helper Functions ---------------------------
+def format_department(name):
+    return str(name).title()
 
-# --------------------------- 5. FILTER — DEPARTMENT ONLY ---------------------------
-def filter_jobs(department=None):
-    df_filtered = df.copy()
+def normalize_group(value):
+    if not value:
+        return ""
+    value = str(value).upper()
+    for g in ["A", "B", "C", "D"]:
+        if g in value:
+            return g
+    return ""
 
-    if department and "department" in df_filtered.columns:
-        df_filtered = df_filtered[
-            df_filtered["department"]
-            .astype(str)
-            .str.lower()
-            .str.strip()
-            == department.lower().strip()
-        ]
-
-    return df_filtered.reset_index(drop=True)
+# --------------------------- 5. Filter Jobs by Department ONLY ---------------------------
+def filter_jobs_by_department(department=None):
+    if not department or "department" not in df.columns:
+        return df.copy()
+    mask = df["department"].astype(str).str.lower().str.strip() == department.lower().strip()
+    return df[mask].reset_index(drop=True)
 
 # --------------------------- 6. PDF Generation ---------------------------
 def generate_pdf(jobs_df):
@@ -86,9 +76,7 @@ def generate_pdf(jobs_df):
     ]
 
     for _, job in jobs_df.iterrows():
-        group = GROUP_LEVEL_MAP.get(
-            normalize_group(job.get("group")), job.get("group", "-")
-        )
+        group = GROUP_LEVEL_MAP.get(normalize_group(job.get("group")), job.get("group", "-"))
         department = format_department(job.get("department", "-"))
 
         elements.append(Paragraph(f"Designation: {job.get('designation','-')}", h2))
@@ -115,32 +103,26 @@ def generate_pdf(jobs_df):
 
 # --------------------------- 7. Streamlit UI ---------------------------
 st.title("Suyog+ Job Finder")
-st.markdown("### Jobs are displayed **only** based on the selected department")
+st.markdown("Find suitable jobs for persons with disabilities in India.")
 
-department = st.selectbox(
-    "Select Department:",
-    departments,
-    index=0 if departments else None
-)
+department = st.selectbox("Select department:", departments) if departments else None
 
 if st.button("Find Jobs"):
-    results = filter_jobs(department)
+    results = filter_jobs_by_department(department)
 
     if results.empty:
-        st.warning("😞 No jobs found for this department.")
+        st.warning("😞 Sorry, no jobs matched your selected department.")
     else:
-        results["Group"] = results["group"].apply(
-            lambda g: GROUP_LEVEL_MAP.get(normalize_group(g), g)
-        )
+        results["Group"] = results["group"].apply(lambda g: GROUP_LEVEL_MAP.get(normalize_group(g), g))
         results["Department"] = results["department"].apply(format_department)
 
-        st.success(f"✅ {len(results)} job(s) found for {department}")
+        st.success(f"✅ {len(results)} job(s) found in {department}.")
         st.dataframe(results)
 
         pdf = generate_pdf(results)
         st.download_button(
             "Download PDF of Jobs",
             data=pdf,
-            file_name=f"{department}_jobs.pdf",
+            file_name="job_matches.pdf",
             mime="application/pdf"
         )
