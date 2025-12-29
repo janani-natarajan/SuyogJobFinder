@@ -1,6 +1,7 @@
 # --------------------------- 1. Imports ---------------------------
 import streamlit as st
 import pandas as pd
+import requests
 import io
 from reportlab.lib.pagesizes import A3
 from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer
@@ -11,26 +12,22 @@ from textwrap import wrap
 # --------------------------- 2. Load Dataset ---------------------------
 df = pd.read_json("cleaned_data.jsonl", lines=True)
 
-# ---- REMOVE TIMESTAMP / DATE COLUMNS ----
+# ---- REMOVE TIMESTAMP / DATE COLUMNS GLOBALLY ----
 df = df.loc[:, ~df.columns.str.contains("time|date", case=False)]
 
+# Clean & normalize text columns
+for col in df.columns:
+    if df[col].dtype == object:
+        df[col] = df[col].map(lambda x: x.strip() if isinstance(x, str) else x)
+
 if df.empty:
-    st.error("Dataset is empty")
     st.stop()
 
-# --------------------------- 3. Constants ---------------------------
-GROUP_LEVEL_MAP = {
-    "A": "A (Level 1)",
-    "B": "B (Level 2)",
-    "C": "C (Level 3)",
-    "D": "D (Level 4)"
-}
-
+# --------------------------- 3. Options ---------------------------
 disabilities = [
     "Visual Impairment", "Hearing Impairment", "Physical Disabilities",
     "Neurological Disabilities", "Blood Disorders",
-    "Intellectual and Developmental Disabilities",
-    "Mental Illness", "Multiple Disabilities"
+    "Intellectual and Developmental Disabilities", "Mental Illness", "Multiple Disabilities"
 ]
 
 intellectual_subcategories = [
@@ -42,9 +39,14 @@ intellectual_subcategories = [
 ]
 
 qualifications = [
-    "10th Standard", "12th Standard", "Certificate", "Diploma",
-    "Graduate", "Post Graduate", "Doctorate"
+    "10th Standard", "12th Standard", "Certificate",
+    "Diploma", "Graduate", "Post Graduate", "Doctorate"
 ]
+
+departments = (
+    df["department"].dropna().unique().tolist()
+    if "department" in df.columns else []
+)
 
 activities = [
     "S Sitting", "ST Standing", "W Walking", "BN Bending", "L Lifting",
@@ -53,128 +55,105 @@ activities = [
     "SE Seeing", "H Hearing", "C Communication"
 ]
 
-departments = (
-    df["department"]
-    .dropna()
-    .astype(str)
-    .str.title()
-    .unique()
-    .tolist()
-    if "department" in df.columns else []
-)
-
 # --------------------------- 4. Helper Functions ---------------------------
 def map_group(qualification):
-    q = qualification.lower()
+    q = qualification.lower().strip() if qualification else ""
     if q in ["graduate", "post graduate", "doctorate"]:
-        return ["A", "B", "C", "D"]
+        return ["Group A", "Group B", "Group C", "Group D"]
     elif q == "12th standard":
-        return ["C", "D"]
-    return ["D"]
+        return ["Group C", "Group D"]
+    elif q:
+        return ["Group D"]
+    return []
 
-def format_department(name):
-    return str(name).title()
-
-def normalize_group(value):
-    if not value:
-        return ""
-    value = str(value).upper()
-    for g in ["A", "B", "C", "D"]:
-        if g in value:
-            return g
-    return ""
-
-# --------------------------- 5. Filter Function (Optional Filters) ---------------------------
-def filter_jobs(disability=None, subcategory=None, qualification=None,
-                department=None, activities=None):
-
+def filter_jobs(disability=None, subcategory=None, qualification=None, department=None, activities=None):
     df_filtered = df.copy()
 
-    # ---- Disability ----
+    # Disability filter
     if disability:
-        d = disability.lower()
-        df_filtered = df_filtered[df_filtered.apply(
-            lambda row: any(
-                d in str(row[col]).lower()
-                for col in df_filtered.columns
-                if "disabilit" in col.lower()
-            ), axis=1
-        )]
+        mask = pd.Series(False, index=df_filtered.index)
+        for col in df_filtered.columns:
+            if "disabilities" in col.lower():
+                mask |= df_filtered[col].astype(str).str.contains(disability, case=False, na=False)
+        if mask.any():
+            df_filtered = df_filtered[mask]
 
-    # ---- Subcategory ----
+    # Subcategory filter
     if subcategory:
-        s = subcategory.lower()
-        df_filtered = df_filtered[df_filtered.apply(
-            lambda row: any(
-                s in str(row[col]).lower()
-                for col in df_filtered.columns
-                if "subcategory" in col.lower()
-            ), axis=1
-        )]
+        mask = pd.Series(False, index=df_filtered.index)
+        for col in df_filtered.columns:
+            if "subcategory" in col.lower():
+                mask |= df_filtered[col].astype(str).str.contains(subcategory, case=False, na=False)
+        if mask.any():
+            df_filtered = df_filtered[mask]
 
-    # ---- Group / Qualification ----
-    if qualification and "group" in df_filtered.columns:
-        allowed_groups = map_group(qualification)
-        df_filtered["group_norm"] = df_filtered["group"].apply(normalize_group)
-        df_filtered = df_filtered[df_filtered["group_norm"].isin(allowed_groups)]
+    # Qualification group filter
+    allowed_groups = map_group(qualification)
+    if allowed_groups and "group" in df_filtered.columns:
+        df_filtered = df_filtered[df_filtered["group"].isin(allowed_groups)]
 
-    # ---- Department ----
-    if department:
-        df_filtered = df_filtered[
-            df_filtered["department"].astype(str).str.lower().str.contains(department.lower())
-        ]
+    # Department filter
+    if department and "department" in df_filtered.columns:
+        df_filtered = df_filtered[df_filtered["department"].str.contains(department, case=False, na=False)]
 
-    # ---- Functional Activities ----
+    # Functional activities filter
     if activities and "functional_requirements" in df_filtered.columns:
-        selected = [a.split()[0].lower() for a in activities]
-        df_filtered = df_filtered[df_filtered["functional_requirements"].astype(str).apply(
-            lambda x: any(a in x.lower() for a in selected)
-        )]
+        df_filtered["functional_norm"] = (
+            df_filtered["functional_requirements"]
+            .astype(str)
+            .str.upper()
+            .str.replace(r"[^A-Z ]", "", regex=True)
+        )
+        selected_codes = [a.split()[0] for a in activities]
+        df_filtered = df_filtered[
+            df_filtered["functional_norm"].apply(lambda x: any(code in x for code in selected_codes))
+        ]
 
     return df_filtered.reset_index(drop=True)
 
-# --------------------------- 6. PDF Generation ---------------------------
-def generate_pdf(jobs_df):
+def generate_pdf_tabulated(jobs_df):
     buffer = io.BytesIO()
-    doc = SimpleDocTemplate(buffer, pagesize=A3)
+
+    # Extra safety: remove time/date if still present
+    jobs_df = jobs_df.loc[:, ~jobs_df.columns.str.contains("time|date", case=False)]
+
+    doc = SimpleDocTemplate(
+        buffer, pagesize=A3,
+        rightMargin=50, leftMargin=50,
+        topMargin=50, bottomMargin=50
+    )
+
     styles = getSampleStyleSheet()
+    elements = []
 
-    title = ParagraphStyle("title", fontSize=18, alignment=1)
-    h2 = ParagraphStyle("h2", fontSize=14, textColor=colors.darkblue)
-    h3 = ParagraphStyle("h3", fontSize=12)
-    text = ParagraphStyle("text", fontSize=11)
+    title = ParagraphStyle("title", parent=styles["Heading1"], alignment=1, fontSize=18)
+    h2 = ParagraphStyle("h2", parent=styles["Heading2"], textColor=colors.darkblue)
+    h3 = ParagraphStyle("h3", parent=styles["Heading3"], textColor=colors.darkgreen)
+    h4 = ParagraphStyle("h4", parent=styles["Heading4"], textColor=colors.darkred)
+    text = ParagraphStyle("text", parent=styles["Normal"], fontSize=11, leading=15)
 
-    elements = [
-        Paragraph("Suyog+", title),
-        Paragraph("By DAIL NIEPMD", title),
-        Spacer(1, 15),
-        Paragraph(f"Total Matches: {len(jobs_df)}", h2),
-        Spacer(1, 20),
-    ]
+    elements.append(Paragraph("Suyog<font color='maroon'>+</font>", title))
+    elements.append(Paragraph("By DAIL NIEPMD", title))
+    elements.append(Spacer(1, 20))
+    elements.append(Paragraph(f"Total Matches: {len(jobs_df)}", styles["Heading2"]))
+    elements.append(Spacer(1, 20))
 
     for _, job in jobs_df.iterrows():
-        group = GROUP_LEVEL_MAP.get(normalize_group(job.get("group")), job.get("group", "-"))
-        department = format_department(job.get("department", "-"))
-        disability = job.get("disabilities", "-")
-        qualification = job.get("qualification_required", "-")
-        functional_req = job.get("functional_requirements", "-")
-
         elements.append(Paragraph(f"Designation: {job.get('designation','-')}", h2))
-        elements.append(Paragraph(f"Group: {group}", h3))
-        elements.append(Paragraph(f"Department: {department}", h3))
-        elements.append(Paragraph(f"Disability: {disability}", h3))
-        elements.append(Paragraph(f"Qualification: {qualification}", h3))
-        elements.append(Paragraph(f"Functional Requirements: {functional_req}", h3))
+        elements.append(Paragraph(f"Group: {job.get('group','-')}", h3))
+        elements.append(Paragraph(f"Department: {job.get('department','-')}", h4))
         elements.append(Spacer(1, 10))
 
         fields = [
+            ("Qualification Required", job.get("qualification_required", "-")),
+            ("Functional Requirements", job.get("functional_requirements", "-")),
             ("Nature of Work", job.get("nature_of_work", "-")),
             ("Working Conditions", job.get("working_conditions", "-")),
         ]
 
-        for k, v in fields:
-            wrapped = "<br/>".join(wrap(str(v), 100))
-            elements.append(Paragraph(f"<b>{k}:</b> {wrapped}", text))
+        for label, value in fields:
+            wrapped = "<br/>".join(wrap(str(value), 100))
+            elements.append(Paragraph(f"<b>{label}:</b> {wrapped}", text))
 
         elements.append(Spacer(1, 25))
 
@@ -182,46 +161,32 @@ def generate_pdf(jobs_df):
     buffer.seek(0)
     return buffer
 
-# --------------------------- 7. Streamlit UI ---------------------------
+# --------------------------- 5. Streamlit UI ---------------------------
 st.title("Suyog+ Job Finder")
 st.markdown("Find suitable jobs for persons with disabilities in India.")
 
-disability = st.selectbox("Select your type of disability *:", [""] + disabilities)
+disability = st.selectbox("Select your type of disability:", disabilities)
 
 subcategory = None
 if disability == "Intellectual and Developmental Disabilities":
-    subcategory = st.selectbox("Select the subcategory *:", [""] + intellectual_subcategories)
+    subcategory = st.selectbox("Select subcategory:", intellectual_subcategories)
 
-qualification = st.selectbox("Select highest qualification *:", [""] + qualifications)
+qualification = st.selectbox("Select highest qualification:", qualifications)
 
-department = st.selectbox("Select department *:", [""] + departments) if departments else None
+department = st.selectbox("Select department:", departments) if departments else None
 
-selected_activities = st.multiselect("Select functional activities *:", activities)
+selected_activities = st.multiselect("Select functional activities:", activities)
 
 if st.button("Find Jobs"):
-    results = filter_jobs(
-        disability or None,
-        subcategory or None,
-        qualification or None,
-        department or None,
-        selected_activities or None
-    )
+    results = filter_jobs(disability, subcategory, qualification, department, selected_activities)
 
     if results.empty:
-        st.warning("😞 Sorry, no jobs matched your profile.")
+        st.warning("😞 No jobs matched your profile.")
     else:
-        results["Group"] = results["group"].apply(
-            lambda g: GROUP_LEVEL_MAP.get(normalize_group(g), g)
-        )
-        results["Department"] = results["department"].apply(format_department)
-        results["Disability"] = results["disabilities"]
-        results["Qualification"] = results["qualification_required"]
-        results["Functional Requirements"] = results["functional_requirements"]
-
         st.success(f"✅ {len(results)} job(s) matched your profile.")
         st.dataframe(results)
 
-        pdf = generate_pdf(results)
+        pdf = generate_pdf_tabulated(results)
         st.download_button(
             "Download PDF of Jobs",
             data=pdf,
